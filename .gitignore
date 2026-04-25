@@ -1,0 +1,87 @@
+# Xcode
+#
+# gitignore contributors: origins at https://github.com/github/gitignore
+
+## Build results
+build/
+DerivedData/
+
+## GNU Emacs
+*~
+
+## General
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Icon must end with two \r
+Icon
+
+
+## Thumbnails
+._*
+
+## Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+## Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+## Xcode
+#
+# gitignore contributors: origins at https://github.com/github/gitignore
+
+## User settings
+xcuserdata/
+
+## Scripts
+*.swp
+*.lock
+*~.nib
+
+## Pods
+#
+# It is not recommended to store usage of CocoaPods in the git repo.
+# Pods/
+
+## Carthage
+#
+# It is not recommended to store usage of Carthage in the git repo.
+# Carthage/Build/
+
+## Fastlane
+#
+# It is not recommended to store usage of Fastlane in the git repo.
+# fastlane/report.xml
+# fastlane/Preview.html
+# fastlane/screenshots/**/*.png
+# fastlane/test_output
+
+## Code Signing
+#
+# It is not recommended to store usage of code signing in the git repo.
+# *.cert
+# *.mobileprovision
+# *.provisionprofile
+# *.p12
+
+## Swift Package Manager
+#
+# It is not recommended to store usage of Swift Package Manager in the git repo.
+.build/
+
+## Package.resolved
+# Package.resolved
+
+## .swiftpm
+.swiftpm/
