@@ -28,7 +28,7 @@ struct SettingView: View {
                     HStack {
                         Text("Phiên bản")
                         Spacer()
-                        Text("1.0.0")
+                        Text("1.1.0")
                             .foregroundColor(.secondary)
                     }
                     HStack {

@@ -1,5 +1,6 @@
 import Foundation
 import UserNotifications
+import Supabase
 
 class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationManager()
@@ -19,15 +20,15 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         }
     }
     
-    // 1. Nhắc nhở học mỗi ngày
+    // 1. Nhắc nhở học mỗi ngày (Tính năng chính)
     func scheduleDailyReminder(at date: Date) {
-        // Hủy các nhắc nhở hàng ngày cũ
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["daily_reminder"])
         
         let content = UNMutableNotificationContent()
         content.title = "Ditanary"
         content.body = "Đã đến giờ học từ vựng rồi, vào app học ngay thôi! 🔥"
         content.sound = .default
+        content.userInfo = ["type": "daily_reminder"]
         
         let calendar = Calendar.current
         let components = calendar.dateComponents([.hour, .minute], from: date)
@@ -35,31 +36,60 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: true)
         let request = UNNotificationRequest(identifier: "daily_reminder", content: content, trigger: trigger)
         
-        UNUserNotificationCenter.current().add(request)
+        UNUserNotificationCenter.current().add(request) { error in
+            if error == nil {
+                print("Đã đặt lịch nhắc nhở hàng ngày thành công")
+            }
+        }
     }
     
-    // 2. Thông báo ôn lại từ vựng
+    // 2. Thông báo ôn lại từ vựng (Đã lược bỏ theo yêu cầu mới)
     func scheduleReviewNotification(for word: String, at reviewDate: Date) {
-        // Chỉ thông báo nếu thời gian ở tương lai
-        guard reviewDate > Date() else { return }
-        
-        let content = UNMutableNotificationContent()
-        content.title = "Đã đến lúc ôn tập! 📚"
-        content.body = "Đã đến lúc ôn lại từ '\(word)' rồi bạn ơi."
-        content.sound = .default
-        
-        let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: reviewDate)
-        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
-        
-        // ID duy nhất cho mỗi từ và mốc thời gian
-        let id = "review_\(word)_\(Int(reviewDate.timeIntervalSince1970))"
-        let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
-        
-        UNUserNotificationCenter.current().add(request)
+        // Tính năng này đã được lược bỏ để tránh làm phiền người dùng
     }
     
-    // Hiển thị thông báo khi app đang mở (foreground)
+    // Lưu thông báo vào Supabase
+    private func saveNotificationToSupabase(title: String, content: String, scheduledDate: Date? = nil) async {
+        guard let userId = await AuthManager.shared.currentUser?.id.uuidString else { return }
+        
+        // Định dạng ngày tạo theo ý muốn (nếu là thông báo tương lai thì dùng ngày đó)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let dateString = formatter.string(from: scheduledDate ?? Date())
+        
+        let notification = Notification(
+            id: UUID().uuidString,
+            user_id: userId,
+            title: title,
+            content: content,
+            is_read: false,
+            created_at: dateString
+        )
+        
+        do {
+            try await supabase
+                .from("notifications")
+                .insert(notification)
+                .execute()
+        } catch {
+            print("Lỗi lưu thông báo: \(error)")
+        }
+    }
+    
+    // Hiển thị thông báo khi app đang mở
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        
+        // Khi thông báo thực sự nổ ra (kể cả khi đang mở app), ta có thể log thêm nếu muốn
+        let content = notification.request.content
+        print("Thông báo đang hiển thị: \(content.title)")
+        
         completionHandler([.banner, .sound, .badge])
+    }
+    
+    // Xử lý khi người dùng nhấn vào thông báo
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        
+        // Có thể điều hướng người dùng đến trang cụ thể ở đây
+        completionHandler()
     }
 }

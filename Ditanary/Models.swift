@@ -20,6 +20,7 @@ struct Vocabulary: Identifiable, Codable, Hashable {
     var user_id: String?
     var learning_level: Int?
     var next_review: String?
+    var pronunciation_score: Int?
     
     enum CodingKeys: String, CodingKey {
         case id = "ID"
@@ -41,6 +42,7 @@ struct Vocabulary: Identifiable, Codable, Hashable {
         case user_id
         case learning_level
         case next_review
+        case pronunciation_score
     }
     
     init(id: String? = UUID().uuidString,
@@ -61,7 +63,8 @@ struct Vocabulary: Identifiable, Codable, Hashable {
          bonus: String? = nil,
          user_id: String? = nil,
          learning_level: Int? = 0,
-         next_review: String? = nil) {
+         next_review: String? = nil,
+         pronunciation_score: Int? = nil) {
         self.id = id
         self.created_at = created_at
         self.topics = topics
@@ -81,12 +84,23 @@ struct Vocabulary: Identifiable, Codable, Hashable {
         self.user_id = user_id
         self.learning_level = learning_level
         self.next_review = next_review
+        self.pronunciation_score = pronunciation_score
     }
 }
 
 struct UpdateLearningData: Encodable {
     let learning_level: Int
     let next_review: String
+}
+
+struct UpdateMasterData: Encodable {
+    let learning_level: Int
+    let next_review: String
+    let pronunciation_score: Int
+}
+
+struct UpdatePronunciationScore: Encodable {
+    let pronunciation_score: Int
 }
 struct Profile: Identifiable, Codable {
     var id: String

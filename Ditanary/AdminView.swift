@@ -22,6 +22,16 @@ struct AdminView: View {
                         }
                     }
                 }
+                
+                Section(header: Text("Thông báo")) {
+                    NavigationLink(destination: AdminBroadcastView()) {
+                        HStack {
+                            Image(systemName: "megaphone.fill")
+                                .foregroundColor(.orange)
+                            Text("Gửi thông báo toàn hệ thống")
+                        }
+                    }
+                }
             }
             .navigationTitle("Trang Quản Trị")
         }
@@ -291,6 +301,94 @@ struct EditUserView: View {
             }
         } catch {
             print("Lỗi cập nhật: \(error)")
+        }
+    }
+}
+
+struct AdminBroadcastView: View {
+    @State private var title: String = ""
+    @State private var content: String = ""
+    @State private var isSending = false
+    @State private var statusMessage = ""
+    
+    var body: some View {
+        Form {
+            Section(header: Text("Nội dung thông báo")) {
+                TextField("Tiêu đề", text: $title)
+                TextEditor(text: $content)
+                    .frame(minHeight: 150)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                    )
+            }
+            
+            Section {
+                Button(action: sendBroadcast) {
+                    if isSending {
+                        ProgressView()
+                    } else {
+                        Text("Gửi cho tất cả người dùng")
+                            .bold()
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .disabled(isSending || title.isEmpty || content.isEmpty)
+                .buttonStyle(.borderedProminent)
+            }
+            
+            if !statusMessage.isEmpty {
+                Section {
+                    Text(statusMessage)
+                        .foregroundColor(statusMessage.contains("Thành công") ? .green : .red)
+                }
+            }
+        }
+        .navigationTitle("Gửi Thông Báo")
+    }
+    
+    func sendBroadcast() {
+        Task {
+            isSending = true
+            statusMessage = "Đang gửi..."
+            
+            do {
+                // 1. Lấy danh sách tất cả profile
+                let fetched: [Profile] = try await supabase
+                    .from("profiles")
+                    .select()
+                    .execute()
+                    .value
+                
+                // 2. Tạo thông báo cho từng người
+                for profile in fetched {
+                    let notification = Notification(
+                        id: UUID().uuidString,
+                        user_id: profile.id,
+                        title: title,
+                        content: content,
+                        is_read: false
+                    )
+                    
+                    try await supabase
+                        .from("notifications")
+                        .insert(notification)
+                        .execute()
+                }
+                
+                DispatchQueue.main.async {
+                    isSending = false
+                    statusMessage = "Thành công! Đã gửi đến \(fetched.count) người dùng."
+                    title = ""
+                    content = ""
+                }
+            } catch {
+                print("Lỗi gửi broadcast: \(error)")
+                DispatchQueue.main.async {
+                    isSending = false
+                    statusMessage = "Thất bại: \(error.localizedDescription)"
+                }
+            }
         }
     }
 }

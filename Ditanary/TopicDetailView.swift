@@ -6,6 +6,8 @@ struct TopicDetailView: View {
     var vocabs: [Vocabulary]
     var onRefresh: () -> Void
     
+    @State private var selectedVocabForEdit: Vocabulary? = nil
+    
     var groupedByWord: [String: [Vocabulary]] {
         Dictionary(grouping: vocabs, by: { $0.vocab?.trimmingCharacters(in: .whitespaces) ?? "Unknown" })
     }
@@ -32,15 +34,40 @@ struct TopicDetailView: View {
                                     .font(.headline)
                                     .foregroundColor(.primary)
                                 
-                                // Hiển thị tiến độ x/5
+                                // Hiển thị tiến độ x/6
                                 let level = meanings.first(where: { ($0.learning_level ?? 0) > 0 })?.learning_level ?? 0
-                                Text("\(level)/5")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundColor(level == 0 ? .red : (level == 5 ? .green : .orange))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background((level == 0 ? Color.red : (level == 5 ? Color.green : Color.orange)).opacity(0.1))
-                                    .cornerRadius(4)
+                                if level >= 6 {
+                                    Text("Master")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.purple)
+                                        .cornerRadius(4)
+                                        
+                                    // Thêm phần hiển thị điểm phát âm
+                                    if let score = meanings.first(where: { ($0.learning_level ?? 0) > 0 })?.pronunciation_score {
+                                        HStack(spacing: 2) {
+                                            Image(systemName: "mic.fill")
+                                                .font(.system(size: 8))
+                                            Text("\(score)/100")
+                                        }
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundColor(score >= 70 ? .green : .orange)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background((score >= 70 ? Color.green : Color.orange).opacity(0.2))
+                                        .cornerRadius(4)
+                                    }
+                                } else {
+                                    Text("\(level)/6")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundColor(level == 0 ? .red : .orange)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background((level == 0 ? Color.red : Color.yellow).opacity(0.2))
+                                        .cornerRadius(4)
+                                }
                                 
                                 Spacer()
                             }
@@ -72,12 +99,25 @@ struct TopicDetailView: View {
                         } label: {
                             Label("Xóa từ", systemImage: "trash")
                         }
+                        
+                        Button {
+                            selectedVocabForEdit = firstMeaning
+                        } label: {
+                            Label("Sửa", systemImage: "pencil")
+                        }
+                        .tint(.orange)
                     }
                 }
             }
         }
         .navigationTitle(topic)
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $selectedVocabForEdit) { vocab in
+            AddVocabView(existing: vocab, onComplete: {
+                onRefresh()
+                selectedVocabForEdit = nil
+            })
+        }
     }
     
     func deleteVocab(_ item: Vocabulary) async {
@@ -100,6 +140,7 @@ struct WordDetailView: View {
     var onRefresh: () -> Void
     
     @State private var selectedVocab: Vocabulary? = nil
+    @State private var practiceTask: PronunciationTask? = nil
     
     var body: some View {
         List {
@@ -200,20 +241,61 @@ struct WordDetailView: View {
                     let level = learningItem.learning_level ?? 1
                     
                     VStack(spacing: 5) {
-                        if level >= 5 {
+                        if level >= 6 {
+                            let hasPassed = (learningItem.pronunciation_score ?? 0) >= 70
+                            
                             HStack {
                                 Image(systemName: "star.fill")
                                 Text("Đã master từ này")
                             }
                             .font(.headline)
-                            .foregroundColor(.yellow)
+                            .foregroundColor(.purple)
+                            
+                            if hasPassed {
+                                Text("=> Đã hoàn thành kiểm tra phát âm")
+                                    .font(.subheadline)
+                                    .foregroundColor(.green)
+                                    
+                                if let score = learningItem.pronunciation_score {
+                                    HStack {
+                                        Image(systemName: "mic.fill")
+                                        Text("Điểm phát âm: \(score)/100")
+                                    }
+                                    .font(.subheadline)
+                                    .foregroundColor(score >= 70 ? .green : .orange)
+                                    .padding(.top, 2)
+                                }
+                                
+                                Button(action: {
+                                    practiceTask = PronunciationTask(
+                                        word: learningItem.vocab ?? "",
+                                        targetText: learningItem.E_example ?? learningItem.vocab ?? "",
+                                        meaning: learningItem
+                                    )
+                                }) {
+                                    Text("Luyện phát âm ngay")
+                                        .font(.subheadline)
+                                        .bold()
+                                        .padding(.horizontal, 15)
+                                        .padding(.vertical, 8)
+                                        .background(Color.purple)
+                                        .foregroundColor(.white)
+                                        .cornerRadius(8)
+                                }
+                                .padding(.top, 5)
+                            } else {
+                                Text("=> Cần kiểm tra phát âm trong phần Master")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            
                         } else {
                             HStack {
                                 Image(systemName: "checkmark.seal.fill")
-                                Text("Đang học (Cấp độ \(level)/5)")
+                                Text("Đang học (Cấp độ \(level)/6)")
                             }
                             .font(.headline)
-                            .foregroundColor(.green)
+                            .foregroundColor(.orange)
                             
                             Text("=> Ôn lại: \(reviewTimeText(for: learningItem.next_review))")
                                 .font(.subheadline)
@@ -222,7 +304,7 @@ struct WordDetailView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding()
-                    .background(level >= 5 ? Color.yellow.opacity(0.1) : Color.green.opacity(0.1))
+                    .background(level >= 6 ? Color.purple.opacity(0.1) : Color.green.opacity(0.1))
                     .cornerRadius(10)
                     .listRowBackground(Color.clear)
                 }
@@ -234,6 +316,12 @@ struct WordDetailView: View {
                 onRefresh()
                 selectedVocab = nil
             })
+        }
+        .fullScreenCover(item: $practiceTask) { task in
+            PronunciationSessionView(tasks: [task]) {
+                practiceTask = nil
+                onRefresh()
+            }
         }
     }
     
