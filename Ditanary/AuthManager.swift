@@ -22,10 +22,10 @@ class AuthManager: ObservableObject {
     
     func checkSession() async {
         do {
-            let session = try await supabase.auth.session
-            self.currentUser = session.user
+            let user = try await AuthService.currentUser()
+            self.currentUser = user
             self.isAuthenticated = true
-            await fetchUserRole(userId: session.user.id.uuidString)
+            await fetchUserRole(userId: user.id.uuidString)
         } catch {
             self.isAuthenticated = false
             self.currentUser = nil
@@ -37,9 +37,7 @@ class AuthManager: ObservableObject {
     func fetchUserRole(userId: String) async {
         do {
             if let role = try await ProfileRepository.fetchRole(userId: userId) {
-                DispatchQueue.main.async {
-                    self.currentUserRole = role
-                }
+                self.currentUserRole = role
             }
         } catch {
             print("Lỗi lấy role: \(error)")
@@ -48,44 +46,32 @@ class AuthManager: ObservableObject {
     
     func listenToAuthChanges() {
         authStateTask?.cancel()
-        authStateTask = Task {
-            for await (_, session) in supabase.auth.authStateChanges {
-                self.currentUser = session?.user
-                self.isAuthenticated = (session != nil)
-                
-                if let userId = session?.user.id.uuidString {
-                    await self.fetchUserRole(userId: userId)
-                } else {
-                    DispatchQueue.main.async {
-                        self.currentUserRole = "user"
-                    }
-                }
+        authStateTask = AuthService.listenToAuthChanges { [weak self] user in
+            guard let self else { return }
+            self.currentUser = user
+            self.isAuthenticated = (user != nil)
+
+            if let userId = user?.id.uuidString {
+                await self.fetchUserRole(userId: userId)
+            } else {
+                self.currentUserRole = "user"
             }
         }
     }
 
     func signIn(email: String, password: String) async throws {
-        try await supabase.auth.signIn(email: email, password: password)
+        try await AuthService.signIn(email: email, password: password)
     }
 
     func signUp(email: String, password: String, displayName: String) async throws {
-        let metadata: [String: AnyJSON] = [
-            "full_name": .string(displayName),
-            "display_name": .string(displayName),
-            "name": .string(displayName)
-        ]
-
-        try await supabase.auth.signUp(
-            email: email,
-            password: password,
-            data: metadata
-        )
+        try await AuthService.signUp(email: email, password: password, displayName: displayName)
     }
     
     func signOut() async throws {
-        try await supabase.auth.signOut()
+        try await AuthService.signOut()
         self.isAuthenticated = false
         self.currentUser = nil
+        self.currentUserRole = "user"
     }
     
     // Lấy tên hiển thị từ metadata (hoặc trả về mặc định nếu không có)
@@ -100,49 +86,20 @@ class AuthManager: ObservableObject {
     func updateDisplayName(_ name: String) async throws {
         guard let userId = currentUser?.id else { return }
         
-        // 1. Cập nhật trong auth.users metadata
-        let _ = try await supabase.auth.update(
-            user: UserAttributes(data: ["display_name": .string(name)])
-        )
+        try await AuthService.updateUserMetadata(["display_name": .string(name)])
         
-        // 2. Cập nhật trong bảng profiles
         try await ProfileRepository.updateDisplayName(userId: userId.uuidString, name: name)
         
-        // Cập nhật lại session để lấy metadata mới
         await checkSession()
     }
     
     func updateAvatar(data: Data) async throws {
         guard let userId = currentUser?.id else { return }
-        
-        let fileName = "\(userId.uuidString)_\(Date().timeIntervalSince1970).jpg"
-        let filePath = "avatars/\(fileName)"
-        
-        // 1. Upload ảnh lên storage (giả sử có bucket tên 'avatars')
-        try await supabase.storage
-            .from("avatars")
-            .upload(
-                filePath,
-                data: data,
-                options: FileOptions(cacheControl: "3600", upsert: true)
-            )
-        
-        // 2. Lấy public URL
-        let publicURL = try supabase.storage
-            .from("avatars")
-            .getPublicURL(path: filePath)
-        
-        let urlString = publicURL.absoluteString
-        
-        // 3. Cập nhật metadata
-        let _ = try await supabase.auth.update(
-            user: UserAttributes(data: ["avatar_url": .string(urlString)])
-        )
-        
-        // 4. Cập nhật bảng profiles
+
+        let urlString = try await AuthService.uploadAvatar(userId: userId, data: data)
+        try await AuthService.updateUserMetadata(["avatar_url": .string(urlString)])
         try await ProfileRepository.updateAvatarURL(userId: userId.uuidString, urlString: urlString)
         
-        // Cập nhật lại session
         await checkSession()
     }
     
