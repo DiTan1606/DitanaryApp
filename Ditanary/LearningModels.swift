@@ -1,6 +1,6 @@
 import Foundation
 
-enum QuestionType {
+enum QuestionType: Equatable {
     case listenAndType
     case meaningAndType
     case multipleChoice
@@ -24,4 +24,15 @@ struct TaskResult: Identifiable {
     let isCorrect: Bool
     let selectedOption: String?
     let answerText: String
+}
+
+struct LearningSessionPlan {
+    let selectedGroups: [[Vocabulary]]
+    let tasks: [LearningTask]
+    let masterTasks: [PronunciationTask]
+    let statsByLevel: [Int: Int]
+    let totalLearningWords: Int
+    let totalSavedWords: Int
+    let dueVocabsCount: Int
+    let masterDueVocabsCount: Int
 }

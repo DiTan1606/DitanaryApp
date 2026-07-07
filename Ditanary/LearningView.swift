@@ -259,121 +259,18 @@ struct LearningView: View {
         isLoading = true
         do {
             guard let userId = AuthManager.shared.currentUser?.id.uuidString else { return }
-            
             let allResponse = try await VocabularyRepository.fetchUserVocabs(userId: userId)
-            
-            let allGrouped = Dictionary(grouping: allResponse, by: { $0.vocab?.trimmingCharacters(in: .whitespaces).lowercased() ?? "unknown" })
-            
-            var allJoinedMeanings = allGrouped.values.compactMap { group -> String? in
-                let ms = group.compactMap { $0.V_meaning }.filter { !$0.isEmpty }
-                return ms.isEmpty ? nil : ms.joined(separator: " / ")
-            }
-            allJoinedMeanings = Array(Set(allJoinedMeanings))
-            
-            let now = Date()
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            let formatter2 = ISO8601DateFormatter()
-            
-            var dueGroups: [[Vocabulary]] = []
-            var masterDueGroups: [[Vocabulary]] = []
-            var tempStats = [1:0, 2:0, 3:0, 4:0, 5:0, 6:0]
-            var totalCount = 0
-            
-            for (_, group) in allGrouped {
-                let isLearning = group.contains { ($0.learning_level ?? 0) > 0 }
-                if isLearning {
-                    totalCount += 1
-                    let lvl = group.first(where: { ($0.learning_level ?? 0) > 0 })?.learning_level ?? 1
-                    tempStats[lvl, default: 0] += 1
-                    
-                    let isDue = group.contains { vocab in
-                        guard let lvl = vocab.learning_level, lvl > 0 else { return false }
-                        guard let nextStr = vocab.next_review else { return true }
-                        if let date = formatter.date(from: nextStr) ?? formatter2.date(from: nextStr) {
-                            return date <= now
-                        }
-                        return true
-                    }
-                    
-                    let hasPassed = (group.first(where: { ($0.learning_level ?? 0) > 0 })?.pronunciation_score ?? 0) >= 70
-                    
-                    if lvl == 6 && !hasPassed {
-                        masterDueGroups.append(group)
-                    } else if lvl < 6 && isDue {
-                        dueGroups.append(group)
-                    }
-                }
-            }
-            
-            let dueCount = dueGroups.count
-            let masterDueCount = masterDueGroups.count
-
-            DispatchQueue.main.async {
-                self.statsByLevel = tempStats
-                self.totalLearningWords = totalCount
-                self.totalSavedWords = allGrouped.count
-                self.dueVocabsCount = dueCount
-                self.masterDueVocabsCount = masterDueCount
-            }
-            
-            dueGroups.shuffle()
-            let selectedGroups = Array(dueGroups.prefix(7))
-            
-            var newTasks: [LearningTask] = []
-            for group in selectedGroups {
-                guard let word = group.first?.vocab else { continue }
-                
-                newTasks.append(LearningTask(word: word, meanings: group, type: .listenAndType))
-                newTasks.append(LearningTask(word: word, meanings: group, type: .meaningAndType))
-                
-                let correctMeaning = group.compactMap { $0.V_meaning }.filter { !$0.isEmpty }.joined(separator: " / ")
-                var options = [correctMeaning.isEmpty ? "Không có nghĩa" : correctMeaning]
-                
-                let distractors = allJoinedMeanings.filter { $0 != options[0] }.shuffled()
-                options.append(contentsOf: distractors.prefix(3))
-                while options.count < 4 {
-                    options.append("Nghĩa giả định \(UUID().uuidString.prefix(4))")
-                }
-                options.shuffle()
-                
-                newTasks.append(LearningTask(word: word, meanings: group, type: .multipleChoice, options: options))
-                
-                for m in group {
-                    if let example = m.E_example, !example.isEmpty {
-                        let cleanedExample = example.replacingOccurrences(of: "[.,!?;:]", with: "", options: .regularExpression)
-                        let words = cleanedExample.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
-                        
-                        if words.count >= 3 {
-                            newTasks.append(LearningTask(
-                                word: word,
-                                meanings: group,
-                                type: .sentenceScramble,
-                                correctSentence: example,
-                                scrambledWords: words.shuffled(),
-                                vHint: m.V_example
-                            ))
-                        }
-                    }
-                }
-            }
-            
-            masterDueGroups.shuffle()
-            let selectedMasterGroups = Array(masterDueGroups.prefix(7))
-            var newMasterTasks: [PronunciationTask] = []
-            for group in selectedMasterGroups {
-                guard let word = group.first?.vocab else { continue }
-                if let meaningWithExample = group.first(where: { $0.E_example != nil && !$0.E_example!.isEmpty }), let example = meaningWithExample.E_example {
-                    newMasterTasks.append(PronunciationTask(word: word, targetText: example, meaning: meaningWithExample))
-                } else {
-                    newMasterTasks.append(PronunciationTask(word: word, targetText: word, meaning: group.first!))
-                }
-            }
+            let plan = LearningSessionBuilder.build(from: allResponse)
             
             DispatchQueue.main.async {
-                self.learningVocabGroups = selectedGroups
-                self.tasks = newTasks.shuffled()
-                self.masterTasks = newMasterTasks
+                self.statsByLevel = plan.statsByLevel
+                self.totalLearningWords = plan.totalLearningWords
+                self.totalSavedWords = plan.totalSavedWords
+                self.dueVocabsCount = plan.dueVocabsCount
+                self.masterDueVocabsCount = plan.masterDueVocabsCount
+                self.learningVocabGroups = plan.selectedGroups
+                self.tasks = plan.tasks
+                self.masterTasks = plan.masterTasks
                 self.isLoading = false
             }
             

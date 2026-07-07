@@ -550,23 +550,8 @@ struct LearningSessionView: View {
             for vocab in group {
                 guard let id = vocab.id else { continue }
                 
-                let currentLvl = vocab.learning_level ?? 0
-                var newLvl = currentLvl + 1
-                if newLvl > 6 { newLvl = 6 }
-                
-                var addDays = 0
-                switch newLvl {
-                case 1: addDays = 0
-                case 2: addDays = 1
-                case 3: addDays = 3
-                case 4: addDays = 7
-                case 5: addDays = 15
-                case 6: addDays = 0 // Học phát âm ngay khi lên master
-                default: addDays = 0
-                }
-                
-                let nextDate = Calendar.current.date(byAdding: .day, value: addDays, to: now) ?? now
-                let nextStr = formatter.string(from: nextDate)
+                let newLvl = ReviewScheduler.nextLearningLevel(from: vocab.learning_level ?? 0)
+                let nextStr = ReviewScheduler.reviewString(for: newLvl, from: now, formatter: formatter)
                 
                 do {
                     try await VocabularyRepository.updateLearningData(id: id, learningLevel: newLvl, nextReview: nextStr)
