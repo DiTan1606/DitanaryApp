@@ -67,7 +67,7 @@ struct NotificationView: View {
     }
     
     func fetchNotifications() async {
-        guard let userId = await AuthManager.shared.currentUser?.id.uuidString else { return }
+        guard let userId = AuthManager.shared.currentUser?.id.uuidString else { return }
         
         isLoading = true
         do {

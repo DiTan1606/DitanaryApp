@@ -57,7 +57,7 @@ class AuthManager: ObservableObject {
     func listenToAuthChanges() {
         authStateTask?.cancel()
         authStateTask = Task {
-            for await (event, session) in await supabase.auth.authStateChanges {
+            for await (_, session) in supabase.auth.authStateChanges {
                 self.currentUser = session?.user
                 self.isAuthenticated = (session != nil)
                 
@@ -116,8 +116,8 @@ class AuthManager: ObservableObject {
         try await supabase.storage
             .from("avatars")
             .upload(
-                path: filePath,
-                file: data,
+                filePath,
+                data: data,
                 options: FileOptions(cacheControl: "3600", upsert: true)
             )
         

@@ -43,7 +43,7 @@ struct ProfileView: View {
                     .offset(x: 5, y: 5)
                 }
                 .padding(.top, 40)
-                .onChange(of: selectedItem) { newItem in
+                .onChange(of: selectedItem) { _, newItem in
                     if let newItem = newItem {
                         Task {
                             await uploadAvatar(newItem)

@@ -4,19 +4,25 @@ import UserNotifications
 struct SettingView: View {
     @AppStorage("daily_reminder_enabled") private var isReminderEnabled = true
     @State private var selectedTime = Date()
+
+    private var appVersion: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+        return "\(version) (\(build))"
+    }
     
     var body: some View {
         NavigationStack {
             List {
                 Section(header: Text("Thông báo")) {
                     Toggle("Nhắc nhở học mỗi ngày", isOn: $isReminderEnabled)
-                        .onChange(of: isReminderEnabled) { newValue in
+                        .onChange(of: isReminderEnabled) { _, newValue in
                             updateReminderSchedule(enabled: newValue, time: selectedTime)
                         }
                     
                     if isReminderEnabled {
                         DatePicker("Thời gian nhắc nhở", selection: $selectedTime, displayedComponents: .hourAndMinute)
-                            .onChange(of: selectedTime) { newValue in
+                            .onChange(of: selectedTime) { _, newValue in
                                 updateReminderSchedule(enabled: true, time: newValue)
                                 saveTime(newValue)
                             }
@@ -28,7 +34,7 @@ struct SettingView: View {
                     HStack {
                         Text("Phiên bản")
                         Spacer()
-                        Text("1.1.0")
+                        Text(appVersion)
                             .foregroundColor(.secondary)
                     }
                     HStack {

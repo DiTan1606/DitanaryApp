@@ -33,7 +33,7 @@ struct AuthView: View {
                         CustomTextField(icon: "person.text.rectangle", placeholder: "Display Name", text: $displayName)
                     }
                     
-                    CustomTextField(icon: "person.fill", placeholder: "Username", text: $email, keyboardType: .emailAddress)
+                    CustomTextField(icon: "envelope.fill", placeholder: "Email", text: $email, keyboardType: .emailAddress)
                     
                     CustomTextField(icon: "lock.fill", placeholder: "Password", text: $password, isSecure: true)
                     
