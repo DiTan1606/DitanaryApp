@@ -42,36 +42,6 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         }
     }
     
-    // 2. Thông báo ôn lại từ vựng (Đã lược bỏ theo yêu cầu mới)
-    func scheduleReviewNotification(for word: String, at reviewDate: Date) {
-        // Tính năng này đã được lược bỏ để tránh làm phiền người dùng
-    }
-    
-    // Lưu thông báo vào Supabase
-    private func saveNotificationToSupabase(title: String, content: String, scheduledDate: Date? = nil) async {
-        guard let userId = await AuthManager.shared.currentUser?.id.uuidString else { return }
-        
-        // Định dạng ngày tạo theo ý muốn (nếu là thông báo tương lai thì dùng ngày đó)
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let dateString = formatter.string(from: scheduledDate ?? Date())
-        
-        let notification = Notification(
-            id: UUID().uuidString,
-            user_id: userId,
-            title: title,
-            content: content,
-            is_read: false,
-            created_at: dateString
-        )
-        
-        do {
-            try await NotificationRepository.insert(notification)
-        } catch {
-            print("Lỗi lưu thông báo: \(error)")
-        }
-    }
-    
     // Hiển thị thông báo khi app đang mở
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         

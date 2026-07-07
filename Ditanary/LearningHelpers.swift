@@ -174,8 +174,9 @@ enum LearningSessionBuilder {
             tasks.append(LearningTask(word: word, meanings: group, type: .meaningAndType))
 
             let correctMeaning = group.compactMap { $0.V_meaning }.filter { !$0.isEmpty }.joined(separator: " / ")
-            var options = [correctMeaning.isEmpty ? "Không có nghĩa" : correctMeaning]
-            let distractors = allJoinedMeanings.filter { $0 != options[0] }.shuffled()
+            let correctOption = correctMeaning.isEmpty ? "Không có nghĩa" : correctMeaning
+            var options = [correctOption]
+            let distractors = allJoinedMeanings.filter { $0 != correctOption }.shuffled()
             options.append(contentsOf: distractors.prefix(3))
 
             while options.count < 4 {
