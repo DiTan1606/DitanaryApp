@@ -1,6 +1,5 @@
 import Foundation
 import UserNotifications
-import Supabase
 
 class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationManager()
@@ -67,10 +66,7 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         )
         
         do {
-            try await supabase
-                .from("notifications")
-                .insert(notification)
-                .execute()
+            try await NotificationRepository.insert(notification)
         } catch {
             print("Lỗi lưu thông báo: \(error)")
         }

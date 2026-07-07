@@ -1,5 +1,4 @@
 import SwiftUI
-import Supabase
 
 struct AuthView: View {
     @State private var isLogin = true
@@ -101,19 +100,9 @@ struct AuthView: View {
         
         do {
             if isLogin {
-                try await supabase.auth.signIn(email: email, password: password)
+                try await AuthManager.shared.signIn(email: email, password: password)
             } else {
-                let metadata: [String: AnyJSON] = [
-                    "full_name": .string(displayName),
-                    "display_name": .string(displayName),
-                    "name": .string(displayName)
-                ]
-
-                try await supabase.auth.signUp(
-                    email: email,
-                    password: password,
-                    data: metadata
-                )
+                try await AuthManager.shared.signUp(email: email, password: password, displayName: displayName)
             }
         } catch {
             errorMessage = "Lỗi: \(error.localizedDescription)"

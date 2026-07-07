@@ -1,5 +1,4 @@
 import SwiftUI
-import Supabase
 import Speech
 import AVFoundation
 
@@ -244,11 +243,7 @@ struct PronunciationSessionView: View {
         if newScore > currentBestScore {
             Task {
                 do {
-                    try await supabase
-                        .from("vocab_list")
-                        .update(UpdatePronunciationScore(pronunciation_score: newScore))
-                        .eq("ID", value: id)
-                        .execute()
+                    try await VocabularyRepository.updatePronunciationScore(id: id, score: newScore)
                 } catch {
                     print("Lỗi lưu điểm phát âm cho \(task.word): \(error)")
                 }
@@ -278,11 +273,7 @@ struct PronunciationSessionView: View {
         for task in tasks {
             guard let id = task.meaning.id else { continue }
             do {
-                try await supabase
-                    .from("vocab_list")
-                    .update(UpdateLearningData(learning_level: 6, next_review: nextStr))
-                    .eq("ID", value: id)
-                    .execute()
+                try await VocabularyRepository.updateLearningData(id: id, learningLevel: 6, nextReview: nextStr)
             } catch {
                 print("Lỗi update master review cho \(task.word): \(error)")
             }

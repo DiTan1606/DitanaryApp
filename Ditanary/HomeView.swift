@@ -1,5 +1,4 @@
 import SwiftUI
-import Supabase
 
 struct HomeView: View {
     let adminUserId = AppConfig.adminUserId 
@@ -316,13 +315,7 @@ struct HomeView: View {
     
     func fetchStoreVocabs() async {
         do {
-            let fetched: [Vocabulary] = try await supabase
-                .from("vocab_list")
-                .select()
-                .eq("user_id", value: adminUserId)
-                .order("created_at", ascending: false)
-                .execute()
-                .value
+            let fetched = try await VocabularyRepository.fetchSystemVocabs(adminUserId: adminUserId)
             
             DispatchQueue.main.async { self.storeVocabs = fetched }
         } catch {
@@ -333,12 +326,7 @@ struct HomeView: View {
     func fetchMyTopics() async {
         guard let myUserId = AuthManager.shared.currentUser?.id.uuidString else { return }
         do {
-            let fetched: [Vocabulary] = try await supabase
-                .from("vocab_list")
-                .select()
-                .eq("user_id", value: myUserId)
-                .execute()
-                .value
+            let fetched = try await VocabularyRepository.fetchUserVocabs(userId: myUserId)
             
             var dict: [String: Set<String>] = [:]
             for v in fetched {
@@ -360,12 +348,7 @@ struct HomeView: View {
         guard let myUserId = AuthManager.shared.currentUser?.id.uuidString else { return }
         do {
             // Fetch Streak from Supabase
-            let stats: [UserStats] = try await supabase
-                .from("user_stats")
-                .select()
-                .eq("user_id", value: myUserId)
-                .execute()
-                .value
+            let stats = try await UserProgressRepository.fetchStats(userId: myUserId)
             
             if var currentStats = stats.first {
                 // Check if streak is broken
@@ -376,20 +359,14 @@ struct HomeView: View {
                     let diff = Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: lastDate), to: Calendar.current.startOfDay(for: now)).day ?? 0
                     if diff > 1 {
                         currentStats.streak_count = 0
-                        try await supabase.from("user_stats").update(["streak_count": 0]).eq("user_id", value: myUserId).execute()
+                        try await UserProgressRepository.resetStreak(userId: myUserId)
                     }
                 }
                 DispatchQueue.main.async { self.streakCount = currentStats.streak_count }
             }
             
             // Fetch Activity Logs from Supabase
-            let logs: [ActivityLog] = try await supabase
-                .from("activity_logs")
-                .select()
-                .eq("user_id", value: myUserId)
-                .eq("completed", value: true)
-                .execute()
-                .value
+            let logs = try await UserProgressRepository.fetchCompletedActivityLogs(userId: myUserId)
             
             var dict: [String: Bool] = [:]
             for log in logs { dict[log.date] = log.completed }
@@ -403,13 +380,7 @@ struct HomeView: View {
     func fetchNotifications() async {
         guard let myUserId = AuthManager.shared.currentUser?.id.uuidString else { return }
         do {
-            let unreadCount: Int = try await supabase
-                .from("notifications")
-                .select("*", head: true, count: .exact)
-                .eq("user_id", value: myUserId)
-                .eq("is_read", value: false)
-                .execute()
-                .count ?? 0
+            let unreadCount = try await NotificationRepository.fetchUnreadCount(userId: myUserId)
             
             DispatchQueue.main.async { self.hasUnreadNotifications = unreadCount > 0 }
         } catch {
@@ -435,7 +406,7 @@ struct HomeView: View {
         }
         
         do {
-            try await supabase.from("vocab_list").insert(myNewVocabs).execute()
+            try await VocabularyRepository.insert(myNewVocabs)
             
             DispatchQueue.main.async {
                 isDownloading = false

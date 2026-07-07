@@ -36,15 +36,7 @@ class AuthManager: ObservableObject {
     
     func fetchUserRole(userId: String) async {
         do {
-            struct RoleData: Decodable { let role: String? }
-            let fetched: [RoleData] = try await supabase
-                .from("profiles")
-                .select("role")
-                .eq("id", value: userId)
-                .execute()
-                .value
-            
-            if let role = fetched.first?.role {
+            if let role = try await ProfileRepository.fetchRole(userId: userId) {
                 DispatchQueue.main.async {
                     self.currentUserRole = role
                 }
@@ -71,6 +63,24 @@ class AuthManager: ObservableObject {
             }
         }
     }
+
+    func signIn(email: String, password: String) async throws {
+        try await supabase.auth.signIn(email: email, password: password)
+    }
+
+    func signUp(email: String, password: String, displayName: String) async throws {
+        let metadata: [String: AnyJSON] = [
+            "full_name": .string(displayName),
+            "display_name": .string(displayName),
+            "name": .string(displayName)
+        ]
+
+        try await supabase.auth.signUp(
+            email: email,
+            password: password,
+            data: metadata
+        )
+    }
     
     func signOut() async throws {
         try await supabase.auth.signOut()
@@ -96,11 +106,7 @@ class AuthManager: ObservableObject {
         )
         
         // 2. Cập nhật trong bảng profiles
-        try await supabase
-            .from("profiles")
-            .update(["display_name": name] as [String: String])
-            .eq("id", value: userId.uuidString)
-            .execute()
+        try await ProfileRepository.updateDisplayName(userId: userId.uuidString, name: name)
         
         // Cập nhật lại session để lấy metadata mới
         await checkSession()
@@ -134,11 +140,7 @@ class AuthManager: ObservableObject {
         )
         
         // 4. Cập nhật bảng profiles
-        try await supabase
-            .from("profiles")
-            .update(["avatar_url": urlString] as [String: String])
-            .eq("id", value: userId.uuidString)
-            .execute()
+        try await ProfileRepository.updateAvatarURL(userId: userId.uuidString, urlString: urlString)
         
         // Cập nhật lại session
         await checkSession()

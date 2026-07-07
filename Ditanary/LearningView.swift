@@ -1,5 +1,4 @@
 import SwiftUI
-import Supabase
 import Charts
 
 struct LearningView: View {
@@ -261,12 +260,7 @@ struct LearningView: View {
         do {
             guard let userId = AuthManager.shared.currentUser?.id.uuidString else { return }
             
-            let allResponse: [Vocabulary] = try await supabase
-                .from("vocab_list")
-                .select()
-                .eq("user_id", value: userId)
-                .execute()
-                .value
+            let allResponse = try await VocabularyRepository.fetchUserVocabs(userId: userId)
             
             let allGrouped = Dictionary(grouping: allResponse, by: { $0.vocab?.trimmingCharacters(in: .whitespaces).lowercased() ?? "unknown" })
             

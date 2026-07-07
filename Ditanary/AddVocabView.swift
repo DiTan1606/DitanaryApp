@@ -1,5 +1,4 @@
 import SwiftUI
-import Supabase
 
 struct AddVocabView: View {
     @Environment(\.dismiss) var dismiss
@@ -136,17 +135,10 @@ struct AddVocabView: View {
         do {
             if existing != nil {
                 // Update
-                try await supabase
-                    .from("vocab_list")
-                    .update(newVocab)
-                    .eq("ID", value: newVocab.id!)
-                    .execute()
+                try await VocabularyRepository.update(newVocab)
             } else {
                 // Insert
-                try await supabase
-                    .from("vocab_list")
-                    .insert(newVocab)
-                    .execute()
+                try await VocabularyRepository.insert(newVocab)
             }
             
             DispatchQueue.main.async {

@@ -1,5 +1,4 @@
 import SwiftUI
-import Supabase
 
 struct NotificationView: View {
     @State private var notifications: [Notification] = []
@@ -71,13 +70,7 @@ struct NotificationView: View {
         
         isLoading = true
         do {
-            let fetched: [Notification] = try await supabase
-                .from("notifications")
-                .select()
-                .eq("user_id", value: userId)
-                .order("created_at", ascending: false)
-                .execute()
-                .value
+            let fetched = try await NotificationRepository.fetchUserNotifications(userId: userId)
             
             // Lọc chỉ hiện những thông báo đã đến giờ hoặc đã qua
             let now = Date()
@@ -106,11 +99,7 @@ struct NotificationView: View {
     func markAsRead(_ notification: Notification) {
         Task {
             do {
-                try await supabase
-                    .from("notifications")
-                    .update(["is_read": true])
-                    .eq("id", value: notification.id)
-                    .execute()
+                try await NotificationRepository.markAsRead(id: notification.id)
                 
                 await fetchNotifications()
             } catch {
@@ -124,11 +113,7 @@ struct NotificationView: View {
             let id = notifications[index].id
             Task {
                 do {
-                    try await supabase
-                        .from("notifications")
-                        .delete()
-                        .eq("id", value: id)
-                        .execute()
+                    try await NotificationRepository.delete(id: id)
                 } catch {
                     print("Lỗi xóa thông báo: \(error)")
                 }

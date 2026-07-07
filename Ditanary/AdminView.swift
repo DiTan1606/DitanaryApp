@@ -1,5 +1,4 @@
 import SwiftUI
-import Supabase
 
 struct AdminView: View {
     var body: some View {
@@ -126,13 +125,7 @@ struct AdminVocabManagerView: View {
         
         isLoading = true
         do {
-            let fetched: [Vocabulary] = try await supabase
-                .from("vocab_list")
-                .select()
-                .eq("user_id", value: userId)
-                .order("created_at", ascending: false)
-                .execute()
-                .value
+            let fetched = try await VocabularyRepository.fetchSystemVocabs(adminUserId: userId)
             
             DispatchQueue.main.async {
                 self.systemVocabs = fetched
@@ -211,12 +204,7 @@ struct AdminUserManagerView: View {
     func fetchProfiles() async {
         isLoading = true
         do {
-            let fetched: [Profile] = try await supabase
-                .from("profiles")
-                .select()
-                .order("created_at", ascending: false)
-                .execute()
-                .value
+            let fetched = try await ProfileRepository.fetchProfiles(ordered: true)
             
             DispatchQueue.main.async {
                 self.profiles = fetched
@@ -230,11 +218,7 @@ struct AdminUserManagerView: View {
     
     func deleteUser(_ profile: Profile) async {
         do {
-            struct DeleteParams: Encodable {
-                let target_user_id: String
-            }
-            try await supabase.rpc("delete_user", params: DeleteParams(target_user_id: profile.id))
-                .execute()
+            try await ProfileRepository.deleteUser(id: profile.id)
             
             DispatchQueue.main.async {
                 self.profiles.removeAll { $0.id == profile.id }
@@ -285,15 +269,7 @@ struct EditUserView: View {
     
     func saveProfile() async {
         do {
-            struct UpdateData: Encodable {
-                let display_name: String
-                let role: String
-            }
-            try await supabase
-                .from("profiles")
-                .update(UpdateData(display_name: profile.display_name ?? "", role: profile.role ?? "user"))
-                .eq("id", value: profile.id)
-                .execute()
+            try await ProfileRepository.updateProfile(profile)
             
             DispatchQueue.main.async {
                 onComplete()
@@ -353,28 +329,8 @@ struct AdminBroadcastView: View {
             statusMessage = "Đang gửi..."
             
             do {
-                // 1. Lấy danh sách tất cả profile
-                let fetched: [Profile] = try await supabase
-                    .from("profiles")
-                    .select()
-                    .execute()
-                    .value
-                
-                // 2. Tạo thông báo cho từng người
-                for profile in fetched {
-                    let notification = Notification(
-                        id: UUID().uuidString,
-                        user_id: profile.id,
-                        title: title,
-                        content: content,
-                        is_read: false
-                    )
-                    
-                    try await supabase
-                        .from("notifications")
-                        .insert(notification)
-                        .execute()
-                }
+                let fetched = try await ProfileRepository.fetchProfiles()
+                try await NotificationRepository.broadcast(title: title, content: content, profiles: fetched)
                 
                 DispatchQueue.main.async {
                     isSending = false

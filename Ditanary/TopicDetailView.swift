@@ -1,5 +1,4 @@
 import SwiftUI
-import Supabase
 
 struct TopicDetailView: View {
     let topic: String
@@ -123,11 +122,7 @@ struct TopicDetailView: View {
     func deleteVocab(_ item: Vocabulary) async {
         guard let id = item.id else { return }
         do {
-            try await supabase
-                .from("vocab_list")
-                .delete()
-                .eq("ID", value: id)
-                .execute()
+            try await VocabularyRepository.delete(id: id)
         } catch {
             print("Xóa thất bại: \(error)")
         }
@@ -357,11 +352,7 @@ struct WordDetailView: View {
     func deleteSingleMeaning(_ item: Vocabulary) async {
         guard let id = item.id else { return }
         do {
-            try await supabase
-                .from("vocab_list")
-                .delete()
-                .eq("ID", value: id)
-                .execute()
+            try await VocabularyRepository.delete(id: id)
 
             DispatchQueue.main.async {
                 onRefresh()
@@ -380,11 +371,7 @@ struct WordDetailView: View {
         do {
             for item in items {
                 guard let id = item.id else { continue }
-                try await supabase
-                    .from("vocab_list")
-                    .update(UpdateLearningData(learning_level: 1, next_review: dateString))
-                    .eq("ID", value: id)
-                    .execute()
+                try await VocabularyRepository.updateLearningData(id: id, learningLevel: 1, nextReview: dateString)
             }
                 
             DispatchQueue.main.async {

@@ -1,5 +1,4 @@
 import SwiftUI
-import Supabase
 
 struct MyVocabularyView: View {
     @State private var vocabs: [Vocabulary] = []
@@ -94,13 +93,7 @@ struct MyVocabularyView: View {
         isLoading = true
         
         do {
-            let fetchedVocabs: [Vocabulary] = try await supabase
-                .from("vocab_list")
-                .select()
-                .eq("user_id", value: userId) // Chỉ lấy từ vựng của mình
-                .order("created_at", ascending: false)
-                .execute()
-                .value
+            let fetchedVocabs = try await VocabularyRepository.fetchUserVocabs(userId: userId, ordered: true)
             
             DispatchQueue.main.async {
                 self.vocabs = fetchedVocabs

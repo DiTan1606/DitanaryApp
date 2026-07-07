@@ -1,5 +1,4 @@
 import SwiftUI
-import Supabase
 
 struct LearningSessionView: View {
     @State var tasks: [LearningTask]
@@ -570,11 +569,7 @@ struct LearningSessionView: View {
                 let nextStr = formatter.string(from: nextDate)
                 
                 do {
-                    try await supabase
-                        .from("vocab_list")
-                        .update(UpdateLearningData(learning_level: newLvl, next_review: nextStr))
-                        .eq("ID", value: id)
-                        .execute()
+                    try await VocabularyRepository.updateLearningData(id: id, learningLevel: newLvl, nextReview: nextStr)
                 } catch {
                     print("Lỗi cập nhật level cho \(vocab.vocab ?? ""): \(error)")
                 }
@@ -588,52 +583,8 @@ struct LearningSessionView: View {
     func recordActivity() async {
         guard let myUserId = AuthManager.shared.currentUser?.id.uuidString else { return }
         
-        let now = Date()
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        let dateStr = formatter.string(from: now)
-        
         do {
-            // 1. Ghi nhận Activity Log vào Supabase
-            // Sử dụng upsert để tránh trùng lặp nếu học nhiều lần trong ngày
-            let log = ActivityLog(user_id: myUserId, date: dateStr, completed: true)
-            try await supabase
-                .from("activity_logs")
-                .upsert(log)
-                .execute()
-            
-            // 2. Cập nhật Streak trong Supabase
-            let statsResponse: [UserStats] = try await supabase
-                .from("user_stats")
-                .select()
-                .eq("user_id", value: myUserId)
-                .execute()
-                .value
-            
-            var stats = statsResponse.first ?? UserStats(user_id: myUserId, streak_count: 0, last_learning_date: nil)
-            let calendar = Calendar.current
-            
-            if let lastDateStr = stats.last_learning_date, let lastDate = formatter.date(from: lastDateStr) {
-                let diff = calendar.dateComponents([.day], from: calendar.startOfDay(for: lastDate), to: calendar.startOfDay(for: now)).day ?? 0
-                
-                if diff == 1 {
-                    stats.streak_count += 1
-                } else if diff > 1 {
-                    stats.streak_count = 1
-                }
-                // Nếu diff == 0 (học lần 2 trong ngày) thì không tăng streak
-            } else {
-                stats.streak_count = 1
-            }
-            
-            stats.last_learning_date = dateStr
-            
-            // Lưu stats mới vào Supabase
-            try await supabase
-                .from("user_stats")
-                .upsert(stats)
-                .execute()
-                
+            try await UserProgressRepository.recordDailyActivityAndUpdateStreak(userId: myUserId)
         } catch {
             print("Lỗi đồng bộ hoạt động với Supabase: \(error)")
         }
