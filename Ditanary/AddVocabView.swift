@@ -5,6 +5,7 @@ struct AddVocabView: View {
     
     var existing: Vocabulary?
     var saveAsSystem: Bool
+    var fixedTopic: String?
     var onComplete: () -> Void
     
     @State private var vocab = ""
@@ -25,9 +26,10 @@ struct AddVocabView: View {
     @State private var isSaving = false
     @State private var errorMessage = ""
     
-    init(existing: Vocabulary? = nil, saveAsSystem: Bool = false, onComplete: @escaping () -> Void) {
+    init(existing: Vocabulary? = nil, saveAsSystem: Bool = false, fixedTopic: String? = nil, onComplete: @escaping () -> Void) {
         self.existing = existing
         self.saveAsSystem = saveAsSystem
+        self.fixedTopic = fixedTopic
         self.onComplete = onComplete
         
         if let v = existing {
@@ -45,6 +47,8 @@ struct AddVocabView: View {
             _synonymous = State(initialValue: v.synonymous ?? "")
             _antonym = State(initialValue: v.antonym ?? "")
             _bonus = State(initialValue: v.bonus ?? "")
+        } else if let fixedTopic {
+            _topics = State(initialValue: fixedTopic)
         }
     }
     
@@ -53,6 +57,7 @@ struct AddVocabView: View {
             Form {
                 Section(header: Text("Thông tin cơ bản")) {
                     TextField("Chủ đề (Topics)", text: $topics)
+                        .disabled(fixedTopic != nil)
                     TextField("Từ vựng (Vocab)", text: $vocab)
                     TextField("Cấp độ (CEFR)", text: $cefr)
                     TextField("Phiên âm (IPA)", text: $ipa)
@@ -116,8 +121,12 @@ struct AddVocabView: View {
         
         let newVocab = Vocabulary(
             id: existing?.id ?? UUID().uuidString,
+            catalog_id: existing?.catalog_id,
+            user_vocabulary_id: existing?.user_vocabulary_id,
             created_at: existing?.created_at, // Giữ nguyên ngày tạo nếu đang edit
+            topic_id: existing?.topic_id,
             topics: topics.isEmpty ? nil : topics,
+            visibility: existing?.visibility,
             vocab: vocab.isEmpty ? nil : vocab,
             CEFR: cefr.isEmpty ? nil : cefr,
             IPA: ipa.isEmpty ? nil : ipa,

@@ -16,6 +16,10 @@ struct TopicPreviewView: View {
     var uniqueWords: [String] {
         groupedByWord.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
+
+    var missingWordKeys: Set<String> {
+        Set(missingVocabs.compactMap { $0.normalizedWord })
+    }
     
     var body: some View {
         VStack {
@@ -24,11 +28,20 @@ struct TopicPreviewView: View {
                     ForEach(uniqueWords, id: \.self) { word in
                         let meanings = groupedByWord[word] ?? []
                         let firstMeaning = meanings.first
+                        let isNewWord = firstMeaning?.normalizedWord.map { missingWordKeys.contains($0) } ?? false
                         
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Text(word)
                                     .font(.headline)
+                                if isNewWord {
+                                    Text("Mới")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundColor(.orange)
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 3)
+                                        .background(Capsule().fill(Color.orange.opacity(0.15)))
+                                }
                                 Spacer()
                             }
                             
@@ -46,6 +59,7 @@ struct TopicPreviewView: View {
                             }
                         }
                         .padding(.vertical, 4)
+                        .listRowBackground(isNewWord ? Color.orange.opacity(0.08) : Color.clear)
                     }
                 }
             }

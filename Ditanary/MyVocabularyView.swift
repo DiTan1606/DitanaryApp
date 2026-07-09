@@ -3,7 +3,7 @@ import SwiftUI
 struct MyVocabularyView: View {
     @State private var vocabs: [Vocabulary] = []
     @State private var isLoading = false
-    @State private var showingAdd = false
+    @State private var showingTopicDraft = false
     
     // Gom nhóm từ vựng theo topics
     var groupedVocabs: [String: [Vocabulary]] {
@@ -29,10 +29,11 @@ struct MyVocabularyView: View {
                     VStack {
                         Text("Chưa có từ vựng nào.")
                             .foregroundColor(.secondary)
-                        Button("Thêm từ mới ngay") {
-                            showingAdd = true
-                        }
-                        .padding(.top, 10)
+                        Text("Hãy tải một bộ từ ở Trang chủ trước, rồi thêm từ riêng trong bộ đó.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.top, 6)
                     }
                 } else {
                     List {
@@ -68,16 +69,18 @@ struct MyVocabularyView: View {
             .navigationTitle("My Vocabulary")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { showingAdd = true }) {
-                        Image(systemName: "plus")
+                    Button {
+                        showingTopicDraft = true
+                    } label: {
+                        Image(systemName: "folder.badge.plus")
                     }
                 }
             }
             .task {
                 await fetchVocabs()
             }
-            .sheet(isPresented: $showingAdd) {
-                AddVocabView(onComplete: {
+            .sheet(isPresented: $showingTopicDraft) {
+                TopicDraftRequestView(onComplete: {
                     Task { await fetchVocabs() }
                 })
             }

@@ -4,6 +4,7 @@ import UserNotifications
 struct SettingView: View {
     @AppStorage("daily_reminder_enabled") private var isReminderEnabled = true
     @State private var selectedTime = Date()
+    @State private var reviewDays: [Int: Int] = [:]
 
     private var appVersion: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
@@ -28,6 +29,35 @@ struct SettingView: View {
                             }
                     }
                 }
+
+                Section(header: Text("Lịch ôn tập")) {
+                    ForEach(1...5, id: \.self) { level in
+                        let range = ReviewIntervalSettings.range(for: level)
+                        Stepper(
+                            value: Binding(
+                                get: { reviewDays[level] ?? ReviewIntervalSettings.days(for: level) },
+                                set: { newValue in
+                                    let clamped = min(max(newValue, range.lowerBound), range.upperBound)
+                                    reviewDays[level] = clamped
+                                    ReviewIntervalSettings.setDays(clamped, for: level)
+                                }
+                            ),
+                            in: range
+                        ) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Cấp \(level) -> \(level + 1)")
+                                Text(reviewIntervalSubtitle(for: level))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+
+                    Button("Đặt lại mặc định") {
+                        ReviewIntervalSettings.reset()
+                        loadReviewDays()
+                    }
+                }
                 
                 
                 Section(header: Text("Thông tin")) {
@@ -48,6 +78,7 @@ struct SettingView: View {
             .navigationTitle("Cài đặt")
             .onAppear {
                 loadSavedTime()
+                loadReviewDays()
                 NotificationManager.shared.requestPermission()
             }
         }
@@ -92,5 +123,17 @@ struct SettingView: View {
                 }
             }
         }
+    }
+
+    func loadReviewDays() {
+        reviewDays = Dictionary(uniqueKeysWithValues: (1...5).map { level in
+            (level, ReviewIntervalSettings.days(for: level))
+        })
+    }
+
+    func reviewIntervalSubtitle(for level: Int) -> String {
+        let days = reviewDays[level] ?? ReviewIntervalSettings.days(for: level)
+        let range = ReviewIntervalSettings.range(for: level)
+        return "\(days) ngày sau, giới hạn \(range.lowerBound)-\(range.upperBound) ngày"
     }
 }

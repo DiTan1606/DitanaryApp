@@ -68,15 +68,7 @@ enum ReviewScheduler {
     }
 
     static func reviewDelayDays(for learningLevel: Int) -> Int {
-        switch learningLevel {
-        case 1: return 0
-        case 2: return 1
-        case 3: return 3
-        case 4: return 7
-        case 5: return 15
-        case 6: return 0
-        default: return 0
-        }
+        ReviewIntervalSettings.days(for: learningLevel)
     }
 
     static func nextReviewDate(for learningLevel: Int, from date: Date) -> Date {
@@ -107,6 +99,71 @@ enum ReviewScheduler {
     }
 }
 
+enum ReviewIntervalSettings {
+    static let defaults = [1: 0, 2: 1, 3: 3, 4: 7, 5: 15]
+    static let ranges = [1: 0...1, 2: 1...3, 3: 3...7, 4: 7...21, 5: 15...45]
+
+    static func days(for level: Int) -> Int {
+        guard level < 6 else { return 0 }
+        let fallback = defaults[level] ?? 0
+        let stored = UserDefaults.standard.object(forKey: key(for: level)) as? Int ?? fallback
+        return clamped(stored, for: level)
+    }
+
+    static func setDays(_ days: Int, for level: Int) {
+        UserDefaults.standard.set(clamped(days, for: level), forKey: key(for: level))
+    }
+
+    static func reset() {
+        for level in 1...5 {
+            UserDefaults.standard.removeObject(forKey: key(for: level))
+        }
+    }
+
+    static func range(for level: Int) -> ClosedRange<Int> {
+        ranges[level] ?? 0...0
+    }
+
+    private static func clamped(_ days: Int, for level: Int) -> Int {
+        let range = range(for: level)
+        return min(max(days, range.lowerBound), range.upperBound)
+    }
+
+    private static func key(for level: Int) -> String {
+        "review_interval_level_\(level)"
+    }
+}
+
+enum ReviewTimeFormatter {
+    static func text(for dateStr: String?) -> String {
+        guard let dateStr else { return "Ngay bây giờ" }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let fallbackFormatter = ISO8601DateFormatter()
+
+        guard let date = formatter.date(from: dateStr) ?? fallbackFormatter.date(from: dateStr) else {
+            return "Ngay bây giờ"
+        }
+
+        let now = Date()
+        if date <= now {
+            return "Hôm nay"
+        }
+
+        let diff = Calendar.current.dateComponents([.day, .hour, .minute], from: now, to: date)
+        if let days = diff.day, days > 0 {
+            return "sau \(days) ngày"
+        }
+        if let hours = diff.hour, hours > 0 {
+            return "sau \(hours) giờ"
+        }
+        if let minutes = diff.minute, minutes > 0 {
+            return "sau \(minutes) phút"
+        }
+        return "Ngay bây giờ"
+    }
+}
+
 enum LearningSessionBuilder {
     static func build(from vocabs: [Vocabulary], now: Date = Date(), maxWords: Int = 7) -> LearningSessionPlan {
         let allGrouped = Dictionary(grouping: vocabs, by: {
@@ -132,7 +189,10 @@ enum LearningSessionBuilder {
             stats[level, default: 0] += 1
 
             let isDue = group.contains { ReviewScheduler.isDue($0, now: now) }
-            let hasPassedPronunciation = (group.first(where: { ($0.learning_level ?? 0) > 0 })?.pronunciation_score ?? 0) >= 70
+            let pronunciationScores = group.compactMap(\.pronunciation_score)
+            let hasPassedPronunciation = !pronunciationScores.isEmpty
+                && pronunciationScores.reduce(0, +) / pronunciationScores.count >= 70
+                && pronunciationScores.count == group.count
 
             if level == 6 && !hasPassedPronunciation {
                 masterDueGroups.append(group)
@@ -212,11 +272,12 @@ enum LearningSessionBuilder {
 
         for group in groups {
             guard let word = group.first?.vocab else { continue }
-            if let meaningWithExample = group.first(where: { $0.E_example != nil && !$0.E_example!.isEmpty }),
-               let example = meaningWithExample.E_example {
-                tasks.append(PronunciationTask(word: word, targetText: example, meaning: meaningWithExample))
-            } else if let first = group.first {
-                tasks.append(PronunciationTask(word: word, targetText: word, meaning: first))
+            for meaning in group {
+                if let example = meaning.E_example, !example.isEmpty {
+                    tasks.append(PronunciationTask(word: word, targetText: example, meaning: meaning))
+                } else {
+                    tasks.append(PronunciationTask(word: word, targetText: word, meaning: meaning))
+                }
             }
         }
 

@@ -7,6 +7,7 @@ struct TopicDetailView: View {
     var onRefresh: () -> Void
     
     @State private var selectedVocabForEdit: Vocabulary? = nil
+    @State private var showingAddVocab = false
     
     var groupedByWord: [String: [Vocabulary]] {
         Dictionary(grouping: vocabs, by: { $0.vocab?.trimmingCharacters(in: .whitespaces) ?? "Unknown" })
@@ -46,7 +47,7 @@ struct TopicDetailView: View {
                                         .cornerRadius(4)
                                         
                                     // Thêm phần hiển thị điểm phát âm
-                                    if let score = meanings.first(where: { ($0.learning_level ?? 0) > 0 })?.pronunciation_score {
+                                    if let score = pronunciationAverage(for: meanings) {
                                         HStack(spacing: 2) {
                                             Image(systemName: "mic.fill")
                                                 .font(.system(size: 8))
@@ -85,6 +86,10 @@ struct TopicDetailView: View {
                                     .font(.body)
                                     .lineLimit(1) // Thu gọn ở màn hình ngoài
                             }
+
+                            Text(learningSummary(for: meanings))
+                                .font(.caption)
+                                .foregroundColor(learningSummaryColor(for: meanings))
                         }
                         .padding(.vertical, 4)
                     }
@@ -114,10 +119,24 @@ struct TopicDetailView: View {
         }
         .navigationTitle(topic)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showingAddVocab = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+            }
+        }
         .sheet(item: $selectedVocabForEdit) { vocab in
             AddVocabView(existing: vocab, saveAsSystem: saveAsSystem, onComplete: {
                 onRefresh()
                 selectedVocabForEdit = nil
+            })
+        }
+        .sheet(isPresented: $showingAddVocab) {
+            AddVocabView(saveAsSystem: saveAsSystem, fixedTopic: topic, onComplete: {
+                onRefresh()
             })
         }
     }
@@ -135,6 +154,38 @@ struct TopicDetailView: View {
         guard let item else { return false }
         return AuthManager.shared.isAdmin || item.visibility == "private"
     }
+
+    private func learningSummary(for meanings: [Vocabulary]) -> String {
+        let learningItems = meanings.filter { ($0.learning_level ?? 0) > 0 }
+        guard let first = learningItems.first else {
+            return "Đưa từ này vào học"
+        }
+
+        let level = first.learning_level ?? 0
+        if level < 6 {
+            return "Ôn lại: \(ReviewTimeFormatter.text(for: first.next_review))"
+        }
+
+        guard let average = pronunciationAverage(for: learningItems) else {
+            return "Kiểm tra phát âm"
+        }
+
+        return "Điểm phát âm: \(average)/100"
+    }
+
+    private func learningSummaryColor(for meanings: [Vocabulary]) -> Color {
+        let learningItems = meanings.filter { ($0.learning_level ?? 0) > 0 }
+        guard let first = learningItems.first else { return .secondary }
+        if (first.learning_level ?? 0) < 6 { return .orange }
+        guard let average = pronunciationAverage(for: learningItems) else { return .purple }
+        return average >= 70 ? .green : .orange
+    }
+
+    private func pronunciationAverage(for meanings: [Vocabulary]) -> Int? {
+        let scores = meanings.compactMap(\.pronunciation_score)
+        guard !scores.isEmpty else { return nil }
+        return scores.reduce(0, +) / scores.count
+    }
 }
 
 struct WordDetailView: View {
@@ -144,7 +195,11 @@ struct WordDetailView: View {
     var onRefresh: () -> Void
     
     @State private var selectedVocab: Vocabulary? = nil
-    @State private var practiceTask: PronunciationTask? = nil
+    @State private var practiceTasks: [PronunciationTask] = []
+    @State private var showingPractice = false
+    @State private var isSubmittingContribution = false
+    @State private var contributionMessage = ""
+    @State private var showingContributionAlert = false
     
     var body: some View {
         List {
@@ -248,7 +303,8 @@ struct WordDetailView: View {
                     
                     VStack(spacing: 5) {
                         if level >= 6 {
-                            let hasPassed = (learningItem.pronunciation_score ?? 0) >= 70
+                            let averageScore = pronunciationAverage(for: meanings)
+                            let hasPassed = (averageScore ?? 0) >= 70
                             
                             HStack {
                                 Image(systemName: "star.fill")
@@ -262,7 +318,7 @@ struct WordDetailView: View {
                                     .font(.subheadline)
                                     .foregroundColor(.green)
                                     
-                                if let score = learningItem.pronunciation_score {
+                                if let score = averageScore {
                                     HStack {
                                         Image(systemName: "mic.fill")
                                         Text("Điểm phát âm: \(score)/100")
@@ -273,11 +329,8 @@ struct WordDetailView: View {
                                 }
                                 
                                 Button(action: {
-                                    practiceTask = PronunciationTask(
-                                        word: learningItem.vocab ?? "",
-                                        targetText: learningItem.E_example ?? learningItem.vocab ?? "",
-                                        meaning: learningItem
-                                    )
+                                    practiceTasks = makePronunciationTasks(from: meanings)
+                                    showingPractice = true
                                 }) {
                                     Text("Luyện phát âm ngay")
                                         .font(.subheadline)
@@ -315,6 +368,29 @@ struct WordDetailView: View {
                     .listRowBackground(Color.clear)
                 }
             }
+
+            if canSubmitToSystem {
+                Section {
+                    Button {
+                        Task { await submitPrivateMeanings() }
+                    } label: {
+                        if isSubmittingContribution {
+                            HStack {
+                                ProgressView()
+                                Text("Đang gửi duyệt...")
+                            }
+                        } else {
+                            HStack {
+                                Image(systemName: "paperplane.fill")
+                                Text("Gửi duyệt lên hệ thống")
+                            }
+                        }
+                    }
+                    .disabled(isSubmittingContribution)
+                } footer: {
+                    Text("Admin duyệt xong thì từ riêng này sẽ được bổ sung vào bộ từ chung.")
+                }
+            }
         }
         .navigationTitle(word)
         .sheet(item: $selectedVocab) { vocab in
@@ -323,41 +399,21 @@ struct WordDetailView: View {
                 selectedVocab = nil
             })
         }
-        .fullScreenCover(item: $practiceTask) { task in
-            PronunciationSessionView(tasks: [task]) {
-                practiceTask = nil
+        .fullScreenCover(isPresented: $showingPractice) {
+            PronunciationSessionView(tasks: practiceTasks) {
+                showingPractice = false
                 onRefresh()
             }
+        }
+        .alert("Thông báo", isPresented: $showingContributionAlert) {
+            Button("OK") {}
+        } message: {
+            Text(contributionMessage)
         }
     }
     
     func reviewTimeText(for dateStr: String?) -> String {
-        guard let dateStr = dateStr else { return "Ngay bây giờ" }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let formatter2 = ISO8601DateFormatter()
-        
-        guard let date = formatter.date(from: dateStr) ?? formatter2.date(from: dateStr) else {
-            return "Ngay bây giờ"
-        }
-        
-        let now = Date()
-        let diff = Calendar.current.dateComponents([.day, .hour, .minute], from: now, to: date)
-        
-        if date <= now {
-            return "Hôm nay"
-        }
-        
-        if let days = diff.day, days > 0 {
-            return "sau \(days) ngày"
-        }
-        if let hours = diff.hour, hours > 0 {
-            return "sau \(hours) giờ"
-        }
-        if let minutes = diff.minute, minutes > 0 {
-            return "sau \(minutes) phút"
-        }
-        return "Ngay bây giờ"
+        ReviewTimeFormatter.text(for: dateStr)
     }
 
     func deleteSingleMeaning(_ item: Vocabulary) async {
@@ -395,6 +451,46 @@ struct WordDetailView: View {
 
     private func canEdit(_ item: Vocabulary) -> Bool {
         AuthManager.shared.isAdmin || item.visibility == "private"
+    }
+
+    private var canSubmitToSystem: Bool {
+        !AuthManager.shared.isAdmin && meanings.contains { $0.visibility == "private" }
+    }
+
+    private func submitPrivateMeanings() async {
+        let privateMeanings = meanings.filter { $0.visibility == "private" }
+        guard !privateMeanings.isEmpty else { return }
+
+        isSubmittingContribution = true
+        defer { isSubmittingContribution = false }
+
+        do {
+            for item in privateMeanings {
+                try await ContributionRepository.submitVocabulary(item)
+            }
+            contributionMessage = "Đã gửi từ này cho admin duyệt."
+            showingContributionAlert = true
+        } catch {
+            contributionMessage = "Gửi duyệt thất bại: \(error.localizedDescription)"
+            showingContributionAlert = true
+        }
+    }
+
+    private func makePronunciationTasks(from meanings: [Vocabulary]) -> [PronunciationTask] {
+        meanings.compactMap { item in
+            guard let word = item.vocab else { return nil }
+            return PronunciationTask(
+                word: word,
+                targetText: item.E_example?.isEmpty == false ? item.E_example! : word,
+                meaning: item
+            )
+        }
+    }
+
+    private func pronunciationAverage(for meanings: [Vocabulary]) -> Int? {
+        let scores = meanings.compactMap(\.pronunciation_score)
+        guard !scores.isEmpty else { return nil }
+        return scores.reduce(0, +) / scores.count
     }
     
     struct DetailRow: View {

@@ -412,7 +412,8 @@ struct HomeView: View {
                 isDownloading = false
                 let newCatalogIds = myNewVocabs.compactMap { $0.catalog_id ?? $0.id }
                 myCatalogIdsByTopic[topicName, default: []].formUnion(newCatalogIds)
-                alertMessage = "Tải thành công \(myNewVocabs.count) từ!"
+                let uniqueWordCount = Set(myNewVocabs.compactMap { $0.normalizedWord }).count
+                alertMessage = "Tải thành công \(uniqueWordCount) từ!"
                 showAlert = true
             }
         } catch {

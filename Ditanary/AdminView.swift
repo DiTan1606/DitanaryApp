@@ -20,6 +20,14 @@ struct AdminView: View {
                             Text("Quản lý bộ từ vựng")
                         }
                     }
+
+                    NavigationLink(destination: AdminContributionReviewView()) {
+                        HStack {
+                            Image(systemName: "tray.full.fill")
+                                .foregroundColor(.purple)
+                            Text("Duyệt đóng góp từ người dùng")
+                        }
+                    }
                 }
                 
                 Section(header: Text("Thông báo")) {

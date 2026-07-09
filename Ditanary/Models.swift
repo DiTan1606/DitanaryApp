@@ -112,6 +112,12 @@ struct Vocabulary: Identifiable, Codable, Hashable {
     }
 }
 
+extension Vocabulary {
+    var normalizedWord: String? {
+        vocab?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+}
+
 struct UpdateLearningData: Encodable {
     let learning_level: Int
     let next_review: String
@@ -155,4 +161,39 @@ struct Notification: Identifiable, Codable {
     var content: String
     var is_read: Bool
     var created_at: String?
+}
+
+struct TopicDraftWordInput: Identifiable, Codable {
+    var id: String = UUID().uuidString
+    var word: String = ""
+    var cefr: String = ""
+    var ipa: String = ""
+    var wordForm: String = ""
+    var eMeaning: String = ""
+    var evMeaning: String = ""
+    var vMeaning: String = ""
+    var eExample: String = ""
+    var vExample: String = ""
+    var wordFamily: String = ""
+    var synonymous: String = ""
+    var antonym: String = ""
+    var bonus: String = ""
+}
+
+struct VocabContribution: Identifiable {
+    let id: String
+    let requesterId: String
+    let status: String
+    let createdAt: String?
+    let vocab: Vocabulary
+}
+
+struct TopicContribution: Identifiable {
+    let id: String
+    let requesterId: String
+    let name: String
+    let description: String?
+    let status: String
+    let createdAt: String?
+    let words: [TopicDraftWordInput]
 }
