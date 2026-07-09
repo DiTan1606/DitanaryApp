@@ -25,6 +25,8 @@ struct AddVocabView: View {
     
     @State private var isSaving = false
     @State private var errorMessage = ""
+    @State private var successMessage = ""
+    @State private var showingSuccessAlert = false
     
     init(existing: Vocabulary? = nil, saveAsSystem: Bool = false, fixedTopic: String? = nil, onComplete: @escaping () -> Void) {
         self.existing = existing
@@ -107,6 +109,14 @@ struct AddVocabView: View {
                         .cornerRadius(10)
                 }
             }
+            .alert("Thông báo", isPresented: $showingSuccessAlert) {
+                Button("OK") {
+                    onComplete()
+                    dismiss()
+                }
+            } message: {
+                Text(successMessage)
+            }
         }
     }
     
@@ -154,8 +164,8 @@ struct AddVocabView: View {
             
             DispatchQueue.main.async {
                 isSaving = false
-                onComplete()
-                dismiss()
+                successMessage = existing == nil ? "Đã thêm từ." : "Đã lưu thay đổi."
+                showingSuccessAlert = true
             }
         } catch {
             DispatchQueue.main.async {

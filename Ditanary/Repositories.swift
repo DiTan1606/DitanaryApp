@@ -416,6 +416,7 @@ enum ContributionRepository {
     private struct VocabSubmissionRow: Decodable {
         let id: String
         let requester_id: String
+        let catalog_id: String?
         let status: String
         let created_at: String?
         let vocab_catalog: VocabCatalogRow?
@@ -531,7 +532,7 @@ enum ContributionRepository {
         let rows: [VocabSubmissionRow] = try await supabase
             .from("vocab_submissions")
             .select("""
-            id,requester_id,status,created_at,
+            id,requester_id,catalog_id,status,created_at,
             vocab_catalog(id,created_at,topic_id,created_by,visibility,word,cefr,ipa,word_form,e_meaning,ev_meaning,v_meaning,e_example,v_example,word_family,synonymous,antonym,bonus,topics(id,name))
             """)
             .eq("status", value: "pending")
@@ -551,6 +552,25 @@ enum ContributionRepository {
         }
     }
 
+    static func fetchUserVocabularySubmissionStatuses() async throws -> [VocabSubmissionStatus] {
+        let rows: [VocabSubmissionRow] = try await supabase
+            .from("vocab_submissions")
+            .select("id,requester_id,catalog_id,status,created_at")
+            .order("created_at", ascending: false)
+            .execute()
+            .value
+
+        return rows.compactMap { row in
+            guard let catalogId = row.catalog_id else { return nil }
+            return VocabSubmissionStatus(
+                id: row.id,
+                catalogId: catalogId,
+                status: row.status,
+                createdAt: row.created_at
+            )
+        }
+    }
+
     static func approveVocabularySubmission(_ submission: VocabContribution) async throws {
         guard let catalogId = submission.vocab.catalog_id ?? submission.vocab.id else { return }
 
@@ -561,10 +581,20 @@ enum ContributionRepository {
             .execute()
 
         try await markVocabSubmission(submission.id, status: "approved")
+        try await sendNotification(
+            userId: submission.requesterId,
+            title: "Từ đã được duyệt",
+            content: "\"\(submission.vocab.vocab ?? "Từ vựng")\" đã được bổ sung vào bộ từ hệ thống."
+        )
     }
 
-    static func rejectVocabularySubmission(id: String) async throws {
-        try await markVocabSubmission(id, status: "rejected")
+    static func rejectVocabularySubmission(_ submission: VocabContribution) async throws {
+        try await markVocabSubmission(submission.id, status: "rejected")
+        try await sendNotification(
+            userId: submission.requesterId,
+            title: "Từ chưa được duyệt",
+            content: "\"\(submission.vocab.vocab ?? "Từ vựng")\" chưa được duyệt. Bạn có thể chỉnh lại rồi gửi duyệt lại."
+        )
     }
 
     static func submitTopicDraft(name: String, description: String?, words: [TopicDraftWordInput]) async throws {
@@ -640,10 +670,13 @@ enum ContributionRepository {
         }
     }
 
-    static func approveTopicSubmission(_ submission: TopicContribution) async throws {
+    static func approveTopicSubmission(_ submission: TopicContribution, approvedWordIds: Set<String>? = nil) async throws {
         guard let adminId = await AuthManager.shared.currentUser?.id.uuidString else { return }
         let topicId = try await topicId(for: submission.name, allowCreate: true)
-        let catalogRows = submission.words.map { word in
+        let approvedWords = submission.words.filter { word in
+            approvedWordIds?.contains(word.id) ?? true
+        }
+        let catalogRows = approvedWords.map { word in
             VocabCatalogInsert(
                 id: UUID().uuidString,
                 topic_id: topicId,
@@ -692,10 +725,20 @@ enum ContributionRepository {
             .execute()
 
         try await markTopicSubmission(submission.id, status: "approved", reviewerId: adminId)
+        try await sendNotification(
+            userId: submission.requesterId,
+            title: "Topic nháp đã được duyệt",
+            content: "\"\(submission.name)\" đã được duyệt với \(catalogRows.count) từ và tự động thêm vào kho từ của bạn."
+        )
     }
 
-    static func rejectTopicSubmission(id: String) async throws {
-        try await markTopicSubmission(id, status: "rejected")
+    static func rejectTopicSubmission(_ submission: TopicContribution) async throws {
+        try await markTopicSubmission(submission.id, status: "rejected")
+        try await sendNotification(
+            userId: submission.requesterId,
+            title: "Topic nháp chưa được duyệt",
+            content: "\"\(submission.name)\" chưa được duyệt. Bạn có thể tạo lại bản nháp tốt hơn rồi gửi lại."
+        )
     }
 
     private static func markVocabSubmission(_ id: String, status: String) async throws {
@@ -803,6 +846,17 @@ enum ContributionRepository {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.string(from: Date())
+    }
+
+    private static func sendNotification(userId: String, title: String, content: String) async throws {
+        let notification = Notification(
+            id: UUID().uuidString,
+            user_id: userId,
+            title: title,
+            content: content,
+            is_read: false
+        )
+        try await NotificationRepository.insert(notification)
     }
 }
 

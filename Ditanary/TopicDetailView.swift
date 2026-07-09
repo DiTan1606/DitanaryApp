@@ -174,6 +174,7 @@ struct WordDetailView: View {
     @State private var isSubmittingContribution = false
     @State private var contributionMessage = ""
     @State private var showingContributionAlert = false
+    @State private var submissionStatuses: [String: VocabSubmissionStatus] = [:]
     
     var body: some View {
         List {
@@ -345,22 +346,49 @@ struct WordDetailView: View {
 
             if canSubmitToSystem {
                 Section {
-                    Button {
-                        Task { await submitPrivateMeanings() }
-                    } label: {
-                        if isSubmittingContribution {
+                    if hasPendingSubmission {
+                        Label("Đang chờ admin duyệt", systemImage: "clock.fill")
+                            .foregroundColor(.orange)
+                    } else if hasRejectedSubmission {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Label("Từ này chưa được duyệt", systemImage: "xmark.circle.fill")
+                                .foregroundColor(.red)
+
                             HStack {
-                                ProgressView()
-                                Text("Đang gửi duyệt...")
-                            }
-                        } else {
-                            HStack {
-                                Image(systemName: "paperplane.fill")
-                                Text("Gửi duyệt lên hệ thống")
+                                Button {
+                                    Task { await submitPrivateMeanings() }
+                                } label: {
+                                    Label("Gửi duyệt lại", systemImage: "paperplane.fill")
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(isSubmittingContribution)
+
+                                Button(role: .destructive) {
+                                    Task { await deletePrivateMeanings() }
+                                } label: {
+                                    Label("Xóa", systemImage: "trash")
+                                }
+                                .buttonStyle(.bordered)
                             }
                         }
+                    } else {
+                        Button {
+                            Task { await submitPrivateMeanings() }
+                        } label: {
+                            if isSubmittingContribution {
+                                HStack {
+                                    ProgressView()
+                                    Text("Đang gửi duyệt...")
+                                }
+                            } else {
+                                HStack {
+                                    Image(systemName: "paperplane.fill")
+                                    Text("Gửi duyệt lên hệ thống")
+                                }
+                            }
+                        }
+                        .disabled(isSubmittingContribution)
                     }
-                    .disabled(isSubmittingContribution)
                 } footer: {
                     Text("Admin duyệt xong thì từ riêng này sẽ được bổ sung vào bộ từ chung.")
                 }
@@ -383,6 +411,9 @@ struct WordDetailView: View {
             Button("OK") {}
         } message: {
             Text(contributionMessage)
+        }
+        .task {
+            await fetchSubmissionStatuses()
         }
     }
     
@@ -431,8 +462,28 @@ struct WordDetailView: View {
         !AuthManager.shared.isAdmin && meanings.contains { $0.visibility == "private" }
     }
 
+    private var hasPendingSubmission: Bool {
+        privateSubmissionStatuses.contains { $0.status == "pending" }
+    }
+
+    private var hasRejectedSubmission: Bool {
+        privateSubmissionStatuses.contains { $0.status == "rejected" }
+    }
+
+    private var privateSubmissionStatuses: [VocabSubmissionStatus] {
+        meanings.compactMap { item in
+            guard item.visibility == "private",
+                  let catalogId = item.catalog_id ?? item.id else { return nil }
+            return submissionStatuses[catalogId]
+        }
+    }
+
     private func submitPrivateMeanings() async {
-        let privateMeanings = meanings.filter { $0.visibility == "private" }
+        let privateMeanings = meanings.filter { item in
+            guard item.visibility == "private",
+                  let catalogId = item.catalog_id ?? item.id else { return false }
+            return submissionStatuses[catalogId]?.status != "pending"
+        }
         guard !privateMeanings.isEmpty else { return }
 
         isSubmittingContribution = true
@@ -442,11 +493,45 @@ struct WordDetailView: View {
             for item in privateMeanings {
                 try await ContributionRepository.submitVocabulary(item)
             }
+            await fetchSubmissionStatuses()
             contributionMessage = "Đã gửi từ này cho admin duyệt."
             showingContributionAlert = true
         } catch {
             contributionMessage = "Gửi duyệt thất bại: \(error.localizedDescription)"
             showingContributionAlert = true
+        }
+    }
+
+    private func deletePrivateMeanings() async {
+        let privateMeanings = meanings.filter { $0.visibility == "private" }
+        do {
+            for item in privateMeanings {
+                guard let id = item.id else { continue }
+                try await VocabularyRepository.delete(id: id)
+            }
+            DispatchQueue.main.async {
+                onRefresh()
+            }
+        } catch {
+            contributionMessage = "Xóa thất bại: \(error.localizedDescription)"
+            showingContributionAlert = true
+        }
+    }
+
+    private func fetchSubmissionStatuses() async {
+        do {
+            let statuses = try await ContributionRepository.fetchUserVocabularySubmissionStatuses()
+            let latestByCatalog = statuses.reduce(into: [String: VocabSubmissionStatus]()) { partialResult, status in
+                if partialResult[status.catalogId] == nil {
+                    partialResult[status.catalogId] = status
+                }
+            }
+
+            DispatchQueue.main.async {
+                submissionStatuses = latestByCatalog
+            }
+        } catch {
+            print("Lỗi tải trạng thái gửi duyệt: \(error)")
         }
     }
 

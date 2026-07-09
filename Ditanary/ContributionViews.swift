@@ -135,6 +135,8 @@ struct TopicDraftRequestView: View {
 struct AdminContributionReviewView: View {
     @State private var vocabSubmissions: [VocabContribution] = []
     @State private var topicSubmissions: [TopicContribution] = []
+    @State private var profilesById: [String: Profile] = [:]
+    @State private var selectedTopicWordIds: [String: Set<String>] = [:]
     @State private var isLoading = false
     @State private var alertMessage = ""
     @State private var showingAlert = false
@@ -151,21 +153,14 @@ struct AdminContributionReviewView: View {
                                 .foregroundColor(.secondary)
                         } else {
                             ForEach(vocabSubmissions) { submission in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text(submission.vocab.vocab ?? "Untitled")
-                                        .font(.headline)
-                                    Text(submission.vocab.topics ?? "Chưa phân loại")
-                                        .font(.subheadline)
-                                        .foregroundColor(.secondary)
-                                    if let meaning = submission.vocab.V_meaning, !meaning.isEmpty {
-                                        Text(meaning)
-                                            .font(.body)
-                                    }
-                                    Text("Người gửi: \(submission.requesterId)")
+                                VStack(alignment: .leading, spacing: 12) {
+                                    ContributionWordCard(vocab: submission.vocab)
+
+                                    Text("Người gửi: \(displayName(for: submission.requesterId))")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
 
-                                    HStack {
+                                    HStack(spacing: 10) {
                                         Button {
                                             Task { await approveVocab(submission) }
                                         } label: {
@@ -183,7 +178,7 @@ struct AdminContributionReviewView: View {
                                         .tint(.red)
                                     }
                                 }
-                                .padding(.vertical, 4)
+                                .padding(.vertical, 8)
                             }
                         }
                     }
@@ -194,27 +189,42 @@ struct AdminContributionReviewView: View {
                                 .foregroundColor(.secondary)
                         } else {
                             ForEach(topicSubmissions) { submission in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text(submission.name)
-                                        .font(.headline)
-                                    Text("\(submission.words.count) từ")
-                                        .font(.subheadline)
-                                        .foregroundColor(.secondary)
+                                VStack(alignment: .leading, spacing: 12) {
+                                    HStack(alignment: .top) {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(submission.name)
+                                                .font(.headline)
+                                            Text("Người gửi: \(displayName(for: submission.requesterId))")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+
+                                        Spacer()
+
+                                        Text("\(selectedCount(for: submission))/\(submission.words.count) từ")
+                                            .font(.caption.bold())
+                                            .foregroundColor(.blue)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 4)
+                                            .background(Color.blue.opacity(0.12))
+                                            .cornerRadius(6)
+                                    }
+
                                     if let description = submission.description, !description.isEmpty {
                                         Text(description)
-                                            .font(.body)
-                                    }
-                                    Text("Người gửi: \(submission.requesterId)")
-                                        .font(.caption)
+                                        .font(.subheadline)
                                         .foregroundColor(.secondary)
-
-                                    ForEach(submission.words.prefix(3)) { word in
-                                        Text("- \(word.word)")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
                                     }
 
-                                    HStack {
+                                    ForEach(submission.words) { word in
+                                        ContributionDraftWordCard(
+                                            word: word,
+                                            isSelected: isSelected(word, in: submission),
+                                            onToggle: { toggle(word, in: submission) }
+                                        )
+                                    }
+
+                                    HStack(spacing: 10) {
                                         Button {
                                             Task { await approveTopic(submission) }
                                         } label: {
@@ -222,6 +232,7 @@ struct AdminContributionReviewView: View {
                                         }
                                         .buttonStyle(.borderedProminent)
                                         .tint(.green)
+                                        .disabled(selectedCount(for: submission) == 0)
 
                                         Button {
                                             Task { await rejectTopic(submission) }
@@ -232,7 +243,7 @@ struct AdminContributionReviewView: View {
                                         .tint(.red)
                                     }
                                 }
-                                .padding(.vertical, 4)
+                                .padding(.vertical, 8)
                             }
                         }
                     }
@@ -260,9 +271,12 @@ struct AdminContributionReviewView: View {
         do {
             async let vocab = ContributionRepository.fetchPendingVocabularySubmissions()
             async let topics = ContributionRepository.fetchPendingTopicSubmissions()
-            let result = try await (vocab, topics)
+            async let profiles = ProfileRepository.fetchProfiles()
+            let result = try await (vocab, topics, profiles)
             vocabSubmissions = result.0
             topicSubmissions = result.1
+            profilesById = Dictionary(uniqueKeysWithValues: result.2.map { ($0.id, $0) })
+            seedTopicSelection(for: result.1)
         } catch {
             alertMessage = "Tải danh sách duyệt thất bại: \(error.localizedDescription)"
             showingAlert = true
@@ -277,19 +291,22 @@ struct AdminContributionReviewView: View {
 
     private func rejectVocab(_ submission: VocabContribution) async {
         await performReview {
-            try await ContributionRepository.rejectVocabularySubmission(id: submission.id)
+            try await ContributionRepository.rejectVocabularySubmission(submission)
         }
     }
 
     private func approveTopic(_ submission: TopicContribution) async {
         await performReview {
-            try await ContributionRepository.approveTopicSubmission(submission)
+            try await ContributionRepository.approveTopicSubmission(
+                submission,
+                approvedWordIds: selectedTopicWordIds[submission.id] ?? Set(submission.words.map(\.id))
+            )
         }
     }
 
     private func rejectTopic(_ submission: TopicContribution) async {
         await performReview {
-            try await ContributionRepository.rejectTopicSubmission(id: submission.id)
+            try await ContributionRepository.rejectTopicSubmission(submission)
         }
     }
 
@@ -301,5 +318,144 @@ struct AdminContributionReviewView: View {
             alertMessage = "Thao tác thất bại: \(error.localizedDescription)"
             showingAlert = true
         }
+    }
+
+    private func displayName(for userId: String) -> String {
+        let profile = profilesById[userId]
+        return profile?.display_name?.isEmpty == false
+            ? profile!.display_name!
+            : profile?.email ?? userId
+    }
+
+    private func seedTopicSelection(for submissions: [TopicContribution]) {
+        for submission in submissions where selectedTopicWordIds[submission.id] == nil {
+            selectedTopicWordIds[submission.id] = Set(submission.words.map(\.id))
+        }
+    }
+
+    private func isSelected(_ word: TopicDraftWordInput, in submission: TopicContribution) -> Bool {
+        selectedTopicWordIds[submission.id, default: Set(submission.words.map(\.id))].contains(word.id)
+    }
+
+    private func selectedCount(for submission: TopicContribution) -> Int {
+        selectedTopicWordIds[submission.id, default: Set(submission.words.map(\.id))].count
+    }
+
+    private func toggle(_ word: TopicDraftWordInput, in submission: TopicContribution) {
+        var selected = selectedTopicWordIds[submission.id] ?? Set(submission.words.map(\.id))
+        if selected.contains(word.id) {
+            selected.remove(word.id)
+        } else {
+            selected.insert(word.id)
+        }
+        selectedTopicWordIds[submission.id] = selected
+    }
+}
+
+private struct ContributionWordCard: View {
+    let vocab: Vocabulary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(vocab.vocab ?? "Untitled")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+
+                Spacer()
+
+                if let cefr = vocab.CEFR, !cefr.isEmpty {
+                    Text(cefr)
+                        .font(.caption.bold())
+                        .foregroundColor(.orange)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Color.orange.opacity(0.14))
+                        .cornerRadius(5)
+                }
+            }
+
+            if let ipa = vocab.IPA, !ipa.isEmpty {
+                Text(ipa)
+                    .font(.subheadline)
+                    .foregroundColor(.blue)
+            }
+
+            if let meaning = vocab.V_meaning, !meaning.isEmpty {
+                Text(meaning)
+                    .font(.body)
+                    .lineLimit(2)
+            }
+
+            if let topic = vocab.topics, !topic.isEmpty {
+                Text(topic)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(12)
+        .background(Color(.secondarySystemBackground))
+        .cornerRadius(10)
+    }
+}
+
+private struct ContributionDraftWordCard: View {
+    let word: TopicDraftWordInput
+    let isSelected: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(isSelected ? .green : .secondary)
+                    .font(.title3)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Text(word.word)
+                            .font(.headline)
+                            .foregroundColor(.primary)
+
+                        Spacer()
+
+                        if !word.cefr.isEmpty {
+                            Text(word.cefr)
+                                .font(.caption.bold())
+                                .foregroundColor(.orange)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Color.orange.opacity(0.14))
+                                .cornerRadius(5)
+                        }
+                    }
+
+                    if !word.ipa.isEmpty {
+                        Text(word.ipa)
+                            .font(.subheadline)
+                            .foregroundColor(.blue)
+                    }
+
+                    if !word.vMeaning.isEmpty {
+                        Text(word.vMeaning)
+                            .font(.body)
+                            .foregroundColor(.primary)
+                            .lineLimit(2)
+                    }
+
+                    if !word.eExample.isEmpty {
+                        Text(word.eExample)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .italic()
+                            .lineLimit(2)
+                    }
+                }
+            }
+            .padding(12)
+            .background(isSelected ? Color.green.opacity(0.08) : Color(.secondarySystemBackground))
+            .cornerRadius(10)
+        }
+        .buttonStyle(.plain)
     }
 }

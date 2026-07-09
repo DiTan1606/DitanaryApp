@@ -188,6 +188,13 @@ struct VocabContribution: Identifiable {
     let vocab: Vocabulary
 }
 
+struct VocabSubmissionStatus: Identifiable {
+    let id: String
+    let catalogId: String
+    let status: String
+    let createdAt: String?
+}
+
 struct TopicContribution: Identifiable {
     let id: String
     let requesterId: String
