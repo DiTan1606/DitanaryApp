@@ -35,18 +35,11 @@ struct TopicDetailView: View {
                                     .font(.headline)
                                     .foregroundColor(.primary)
                                 
-                                // Hiển thị tiến độ x/6
-                                let level = meanings.first(where: { ($0.learning_level ?? 0) > 0 })?.learning_level ?? 0
+                                let learningItem = meanings.first(where: { ($0.learning_level ?? 0) > 0 })
+                                let level = learningItem?.learning_level ?? 0
                                 if level >= 6 {
-                                    Text("Master")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundColor(.white)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(Color.purple)
-                                        .cornerRadius(4)
-                                        
-                                    // Thêm phần hiển thị điểm phát âm
+                                    learningTag("Master", foreground: .white, background: .purple)
+
                                     if let score = pronunciationAverage(for: meanings) {
                                         HStack(spacing: 2) {
                                             Image(systemName: "mic.fill")
@@ -59,15 +52,23 @@ struct TopicDetailView: View {
                                         .padding(.vertical, 2)
                                         .background((score >= 70 ? Color.green : Color.orange).opacity(0.2))
                                         .cornerRadius(4)
+                                    } else {
+                                        learningTag("Kiểm tra phát âm", foreground: .purple, background: .purple.opacity(0.16))
                                     }
                                 } else {
-                                    Text("\(level)/6")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundColor(level == 0 ? .red : .orange)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background((level == 0 ? Color.red : Color.yellow).opacity(0.2))
-                                        .cornerRadius(4)
+                                    learningTag(
+                                        "\(level)/6",
+                                        foreground: level == 0 ? .red : .orange,
+                                        background: (level == 0 ? Color.red : Color.yellow).opacity(0.2)
+                                    )
+
+                                    if level > 0 {
+                                        learningTag(
+                                            "Ôn lại: \(ReviewTimeFormatter.text(for: learningItem?.next_review))",
+                                            foreground: .orange,
+                                            background: Color.orange.opacity(0.14)
+                                        )
+                                    }
                                 }
                                 
                                 Spacer()
@@ -87,9 +88,11 @@ struct TopicDetailView: View {
                                     .lineLimit(1) // Thu gọn ở màn hình ngoài
                             }
 
-                            Text(learningSummary(for: meanings))
-                                .font(.caption)
-                                .foregroundColor(learningSummaryColor(for: meanings))
+                            if shouldShowLearningSummary(for: meanings) {
+                                Text(learningSummary(for: meanings))
+                                    .font(.caption)
+                                    .foregroundColor(learningSummaryColor(for: meanings))
+                            }
                         }
                         .padding(.vertical, 4)
                     }
@@ -153,6 +156,22 @@ struct TopicDetailView: View {
     private func canEdit(_ item: Vocabulary?) -> Bool {
         guard let item else { return false }
         return AuthManager.shared.isAdmin || item.visibility == "private"
+    }
+
+    private func learningTag(_ text: String, foreground: Color, background: Color) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundColor(foreground)
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(background)
+            .cornerRadius(4)
+    }
+
+    private func shouldShowLearningSummary(for meanings: [Vocabulary]) -> Bool {
+        !meanings.contains { ($0.learning_level ?? 0) > 0 }
     }
 
     private func learningSummary(for meanings: [Vocabulary]) -> String {
