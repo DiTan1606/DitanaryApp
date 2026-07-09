@@ -275,72 +275,43 @@ struct WordDetailView: View {
                     .listRowBackground(Color.clear)
                 } else if let learningItem = learningItem {
                     let level = learningItem.learning_level ?? 1
-                    
-                    VStack(spacing: 5) {
-                        if level >= 6 {
-                            let averageScore = pronunciationAverage(for: meanings)
-                            let hasPassed = (averageScore ?? 0) >= 70
-                            
-                            HStack {
-                                Image(systemName: "star.fill")
-                                Text("Đã master từ này")
-                            }
-                            .font(.headline)
-                            .foregroundColor(.purple)
-                            
+                    if level >= 6 {
+                        let averageScore = pronunciationAverage(for: meanings)
+                        let hasPassed = (averageScore ?? 0) >= 70
+
+                        VStack(spacing: 10) {
                             if hasPassed {
-                                Text("=> Đã hoàn thành kiểm tra phát âm")
-                                    .font(.subheadline)
-                                    .foregroundColor(.green)
-                                    
-                                if let score = averageScore {
-                                    HStack {
-                                        Image(systemName: "mic.fill")
-                                        Text("Điểm phát âm: \(score)/100")
-                                    }
-                                    .font(.subheadline)
-                                    .foregroundColor(score >= 70 ? .green : .orange)
-                                    .padding(.top, 2)
-                                }
-                                
-                                Button(action: {
-                                    practiceTasks = makePronunciationTasks(from: meanings)
-                                    showingPractice = true
-                                }) {
-                                    Text("Luyện phát âm ngay")
-                                        .font(.subheadline)
-                                        .bold()
-                                        .padding(.horizontal, 15)
-                                        .padding(.vertical, 8)
-                                        .background(Color.purple)
-                                        .foregroundColor(.white)
-                                        .cornerRadius(8)
-                                }
-                                .padding(.top, 5)
+                                masterPassedCard(score: averageScore)
                             } else {
-                                Text("=> Cần kiểm tra phát âm trong phần Master")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
+                                Button {
+                                    openLearningTab()
+                                } label: {
+                                    masterNeedsPronunciationCard()
+                                }
+                                .buttonStyle(.plain)
                             }
-                            
+
+                            reviewInfoCard(
+                                title: "Đang học (Cấp độ \(level))",
+                                reviewText: reviewTimeText(for: learningItem.next_review),
+                                tint: .purple
+                            )
+                        }
+                        .listRowBackground(Color.clear)
+                    } else {
+                        if ReviewScheduler.isDue(learningItem, now: Date()) {
+                            Button {
+                                openLearningTab()
+                            } label: {
+                                learningProgressCard(level: level, reviewText: reviewTimeText(for: learningItem.next_review))
+                            }
+                            .buttonStyle(.plain)
+                            .listRowBackground(Color.clear)
                         } else {
-                            HStack {
-                                Image(systemName: "checkmark.seal.fill")
-                                Text("Đang học (Cấp độ \(level)/6)")
-                            }
-                            .font(.headline)
-                            .foregroundColor(.orange)
-                            
-                            Text("=> Ôn lại: \(reviewTimeText(for: learningItem.next_review))")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
+                            learningProgressCard(level: level, reviewText: reviewTimeText(for: learningItem.next_review))
+                                .listRowBackground(Color.clear)
                         }
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(level >= 6 ? Color.purple.opacity(0.1) : Color.green.opacity(0.1))
-                    .cornerRadius(10)
-                    .listRowBackground(Color.clear)
                 }
             }
 
@@ -421,6 +392,10 @@ struct WordDetailView: View {
         ReviewTimeFormatter.text(for: dateStr)
     }
 
+    private func openLearningTab() {
+        NotificationCenter.default.post(name: .openLearningTab, object: nil)
+    }
+
     func deleteSingleMeaning(_ item: Vocabulary) async {
         guard let id = item.id else { return }
         do {
@@ -456,6 +431,107 @@ struct WordDetailView: View {
 
     private func canEdit(_ item: Vocabulary) -> Bool {
         AuthManager.shared.isAdmin || item.visibility == "private"
+    }
+
+    private func learningProgressCard(level: Int, reviewText: String) -> some View {
+        VStack(spacing: 5) {
+            HStack {
+                Image(systemName: "checkmark.seal.fill")
+                Text("Đang học (Cấp độ \(level)/6)")
+            }
+            .font(.headline)
+            .foregroundColor(.orange)
+
+            Text("=> Ôn lại: \(reviewText)")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+        .background(Color.green.opacity(0.1))
+        .cornerRadius(10)
+    }
+
+    private func masterNeedsPronunciationCard() -> some View {
+        VStack(spacing: 5) {
+            HStack {
+                Image(systemName: "star.fill")
+                Text("Đã master từ này")
+            }
+            .font(.headline)
+            .foregroundColor(.purple)
+
+            Text("=> Cần kiểm tra phát âm trong phần Learning")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+        .background(Color.purple.opacity(0.1))
+        .cornerRadius(10)
+    }
+
+    private func masterPassedCard(score: Int?) -> some View {
+        VStack(spacing: 5) {
+            HStack {
+                Image(systemName: "star.fill")
+                Text("Đã master từ này")
+            }
+            .font(.headline)
+            .foregroundColor(.purple)
+
+            Text("=> Đã hoàn thành kiểm tra phát âm")
+                .font(.subheadline)
+                .foregroundColor(.green)
+
+            if let score {
+                HStack {
+                    Image(systemName: "mic.fill")
+                    Text("Điểm phát âm: \(score)/100")
+                }
+                .font(.subheadline)
+                .foregroundColor(score >= 70 ? .green : .orange)
+                .padding(.top, 2)
+            }
+
+            Button(action: {
+                practiceTasks = makePronunciationTasks(from: meanings)
+                showingPractice = true
+            }) {
+                Text("Luyện phát âm ngay")
+                    .font(.subheadline)
+                    .bold()
+                    .padding(.horizontal, 15)
+                    .padding(.vertical, 8)
+                    .background(Color.purple)
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+            }
+            .padding(.top, 5)
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+        .background(Color.purple.opacity(0.1))
+        .cornerRadius(10)
+    }
+
+    private func reviewInfoCard(title: String, reviewText: String, tint: Color) -> some View {
+        VStack(spacing: 5) {
+            HStack {
+                Image(systemName: "clock.badge.checkmark.fill")
+                Text(title)
+            }
+            .font(.headline)
+            .foregroundColor(tint)
+
+            Text("=> Ôn lại: \(reviewText)")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+        .background(tint.opacity(0.08))
+        .cornerRadius(10)
     }
 
     private var canSubmitToSystem: Bool {
