@@ -5,7 +5,7 @@ struct HomeView: View {
     
     @State private var storeVocabs: [Vocabulary] = []
     @State private var myVocabs: [Vocabulary] = [] // Store full objects for progress
-    @State private var myCatalogIdsByTopic: [String: Set<String>] = [:]
+    @State private var myDownloadKeysByTopic: [String: Set<String>] = [:]
     
     @State private var isLoading = false
     @State private var isDownloading = false
@@ -221,13 +221,13 @@ struct HomeView: View {
     @ViewBuilder
     func topicRow(topic: String) -> some View {
         let topicVocabs = groupedStoreVocabs[topic] ?? []
-        let myCatalogIdsInTopic = myCatalogIdsByTopic[topic] ?? []
+        let myDownloadKeysInTopic = myDownloadKeysByTopic[topic] ?? []
         let missingVocabs = topicVocabs.filter { adminVocab in
-            guard let catalogId = adminVocab.catalog_id ?? adminVocab.id else { return false }
-            return !myCatalogIdsInTopic.contains(catalogId)
+            guard let downloadKey = adminVocab.downloadIdentityKey else { return false }
+            return !myDownloadKeysInTopic.contains(downloadKey)
         }
         
-        let hasDownloadedSome = !myCatalogIdsInTopic.isEmpty
+        let hasDownloadedSome = !myDownloadKeysInTopic.isEmpty
         let isFullyDownloaded = hasDownloadedSome && missingVocabs.isEmpty
         let needsUpdate = hasDownloadedSome && !missingVocabs.isEmpty
         
@@ -331,14 +331,14 @@ struct HomeView: View {
             var dict: [String: Set<String>] = [:]
             for v in fetched {
                 if let topic = v.topics?.trimmingCharacters(in: .whitespaces), !topic.isEmpty {
-                    if let catalogId = v.catalog_id {
-                        dict[topic, default: []].insert(catalogId)
+                    if let downloadKey = v.downloadIdentityKey {
+                        dict[topic, default: []].insert(downloadKey)
                     }
                 }
             }
             DispatchQueue.main.async {
                 self.myVocabs = fetched
-                self.myCatalogIdsByTopic = dict
+                self.myDownloadKeysByTopic = dict
             }
         } catch {
             print("Lỗi lấy my topics: \(error)")
@@ -410,8 +410,8 @@ struct HomeView: View {
             
             DispatchQueue.main.async {
                 isDownloading = false
-                let newCatalogIds = myNewVocabs.compactMap { $0.catalog_id ?? $0.id }
-                myCatalogIdsByTopic[topicName, default: []].formUnion(newCatalogIds)
+                let newDownloadKeys = myNewVocabs.compactMap(\.downloadIdentityKey)
+                myDownloadKeysByTopic[topicName, default: []].formUnion(newDownloadKeys)
                 let uniqueWordCount = Set(myNewVocabs.compactMap { $0.normalizedWord }).count
                 alertMessage = "Tải thành công \(uniqueWordCount) từ!"
                 showAlert = true

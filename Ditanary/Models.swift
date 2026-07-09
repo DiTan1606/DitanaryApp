@@ -116,6 +116,21 @@ extension Vocabulary {
     var normalizedWord: String? {
         vocab?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
+
+    var downloadIdentityKey: String? {
+        guard let normalizedWord else { return nil }
+        return [
+            normalizedWord,
+            normalizedText(word_form),
+            normalizedText(E_meaning),
+            normalizedText(EV_meaning),
+            normalizedText(V_meaning)
+        ].joined(separator: "|")
+    }
+
+    private func normalizedText(_ value: String?) -> String {
+        value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    }
 }
 
 struct UpdateLearningData: Encodable {
