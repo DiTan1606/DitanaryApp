@@ -2,80 +2,378 @@ import Foundation
 import Supabase
 
 enum VocabularyRepository {
+    private struct TopicRow: Codable {
+        let id: String
+        let name: String
+    }
+
+    private struct VocabCatalogRow: Codable {
+        let id: String
+        let created_at: String?
+        let topic_id: String?
+        let created_by: String?
+        let visibility: String?
+        let word: String?
+        let cefr: String?
+        let ipa: String?
+        let word_form: String?
+        let e_meaning: String?
+        let ev_meaning: String?
+        let v_meaning: String?
+        let e_example: String?
+        let v_example: String?
+        let word_family: String?
+        let synonymous: String?
+        let antonym: String?
+        let bonus: String?
+        let topics: TopicRow?
+    }
+
+    private struct UserVocabularyRow: Codable {
+        let id: String
+        let user_id: String?
+        let vocab_id: String?
+        let learning_level: Int?
+        let next_review: String?
+        let pronunciation_score: Int?
+        let saved_at: String?
+        let vocab_catalog: VocabCatalogRow?
+    }
+
+    private struct VocabCatalogInsert: Encodable {
+        let id: String
+        let topic_id: String?
+        let created_by: String?
+        let visibility: String
+        let word: String
+        let cefr: String?
+        let ipa: String?
+        let word_form: String?
+        let e_meaning: String?
+        let ev_meaning: String?
+        let v_meaning: String?
+        let e_example: String?
+        let v_example: String?
+        let word_family: String?
+        let synonymous: String?
+        let antonym: String?
+        let bonus: String?
+    }
+
+    private struct VocabCatalogUpdate: Encodable {
+        let topic_id: String?
+        let word: String
+        let cefr: String?
+        let ipa: String?
+        let word_form: String?
+        let e_meaning: String?
+        let ev_meaning: String?
+        let v_meaning: String?
+        let e_example: String?
+        let v_example: String?
+        let word_family: String?
+        let synonymous: String?
+        let antonym: String?
+        let bonus: String?
+    }
+
+    private struct UserVocabularyInsert: Encodable {
+        let id: String
+        let user_id: String
+        let vocab_id: String
+        let learning_level: Int
+        let next_review: String?
+        let pronunciation_score: Int?
+    }
+
+    private struct UserVocabularyDeleteLookup: Decodable {
+        let id: String
+        let vocab_id: String?
+        let vocab_catalog: VocabCatalogRow?
+    }
+
     static func fetchUserVocabs(userId: String, ordered: Bool = false) async throws -> [Vocabulary] {
+        let selectColumns = """
+        id,user_id,vocab_id,learning_level,next_review,pronunciation_score,saved_at,
+        vocab_catalog(id,created_at,topic_id,created_by,visibility,word,cefr,ipa,word_form,e_meaning,ev_meaning,v_meaning,e_example,v_example,word_family,synonymous,antonym,bonus,topics(id,name))
+        """
+
         if ordered {
-            return try await supabase
-                .from("vocab_list")
-                .select()
+            let rows: [UserVocabularyRow] = try await supabase
+                .from("user_vocabulary")
+                .select(selectColumns)
                 .eq("user_id", value: userId)
-                .order("created_at", ascending: false)
+                .order("saved_at", ascending: false)
                 .execute()
                 .value
+
+            return rows.compactMap(mapUserVocabulary)
         }
 
-        return try await supabase
-            .from("vocab_list")
-            .select()
+        let rows: [UserVocabularyRow] = try await supabase
+            .from("user_vocabulary")
+            .select(selectColumns)
             .eq("user_id", value: userId)
             .execute()
             .value
+
+        return rows.compactMap(mapUserVocabulary)
     }
 
     static func fetchSystemVocabs(adminUserId: String) async throws -> [Vocabulary] {
-        try await supabase
-            .from("vocab_list")
-            .select()
-            .eq("user_id", value: adminUserId)
+        let rows: [VocabCatalogRow] = try await supabase
+            .from("vocab_catalog")
+            .select("id,created_at,topic_id,created_by,visibility,word,cefr,ipa,word_form,e_meaning,ev_meaning,v_meaning,e_example,v_example,word_family,synonymous,antonym,bonus,topics(id,name)")
+            .eq("visibility", value: "system")
             .order("created_at", ascending: false)
             .execute()
             .value
+
+        return rows.map(mapCatalog)
     }
 
     static func insert(_ vocabs: [Vocabulary]) async throws {
+        guard let userId = await AuthManager.shared.currentUser?.id.uuidString else { return }
+        let links = vocabs.compactMap { vocab -> UserVocabularyInsert? in
+            guard let catalogId = vocab.catalog_id ?? vocab.id else { return nil }
+            return UserVocabularyInsert(
+                id: UUID().uuidString,
+                user_id: userId,
+                vocab_id: catalogId,
+                learning_level: vocab.learning_level ?? 0,
+                next_review: vocab.next_review,
+                pronunciation_score: vocab.pronunciation_score
+            )
+        }
+
+        guard !links.isEmpty else { return }
         try await supabase
-            .from("vocab_list")
-            .insert(vocabs)
+            .from("user_vocabulary")
+            .insert(links)
             .execute()
     }
 
-    static func insert(_ vocab: Vocabulary) async throws {
+    static func insert(_ vocab: Vocabulary, asSystem: Bool = false) async throws {
+        guard let userId = await AuthManager.shared.currentUser?.id.uuidString else { return }
+        let catalogId = vocab.catalog_id ?? vocab.id ?? UUID().uuidString
+        let topicId = try await topicId(for: vocab.topics, allowCreate: asSystem)
+
         try await supabase
-            .from("vocab_list")
-            .insert(vocab)
+            .from("vocab_catalog")
+            .insert(makeCatalogInsert(from: vocab, id: catalogId, topicId: topicId, userId: userId, asSystem: asSystem))
             .execute()
+
+        if !asSystem {
+            let link = UserVocabularyInsert(
+                id: UUID().uuidString,
+                user_id: userId,
+                vocab_id: catalogId,
+                learning_level: vocab.learning_level ?? 0,
+                next_review: vocab.next_review,
+                pronunciation_score: vocab.pronunciation_score
+            )
+
+            try await supabase
+                .from("user_vocabulary")
+                .insert(link)
+                .execute()
+        }
     }
 
     static func update(_ vocab: Vocabulary) async throws {
-        guard let id = vocab.id else { return }
+        guard let catalogId = vocab.catalog_id ?? (vocab.user_vocabulary_id == nil ? vocab.id : nil) else { return }
+        let topicId = try await topicId(for: vocab.topics, allowCreate: await AuthManager.shared.isAdmin)
+
         try await supabase
-            .from("vocab_list")
-            .update(vocab)
-            .eq("ID", value: id)
+            .from("vocab_catalog")
+            .update(makeCatalogUpdate(from: vocab, topicId: topicId))
+            .eq("id", value: catalogId)
             .execute()
     }
 
     static func delete(id: String) async throws {
+        let userRows: [UserVocabularyDeleteLookup] = try await supabase
+            .from("user_vocabulary")
+            .select("id,vocab_id,vocab_catalog(id,visibility)")
+            .eq("id", value: id)
+            .limit(1)
+            .execute()
+            .value
+
         try await supabase
-            .from("vocab_list")
+            .from("user_vocabulary")
             .delete()
-            .eq("ID", value: id)
+            .eq("id", value: id)
+            .execute()
+
+        if let userRow = userRows.first,
+           userRow.vocab_catalog?.visibility == "private",
+           let catalogId = userRow.vocab_id {
+            try await supabase
+                .from("vocab_catalog")
+                .delete()
+                .eq("id", value: catalogId)
+                .execute()
+            return
+        }
+
+        try await supabase
+            .from("vocab_catalog")
+            .delete()
+            .eq("id", value: id)
             .execute()
     }
 
     static func updateLearningData(id: String, learningLevel: Int, nextReview: String) async throws {
         try await supabase
-            .from("vocab_list")
+            .from("user_vocabulary")
             .update(UpdateLearningData(learning_level: learningLevel, next_review: nextReview))
-            .eq("ID", value: id)
+            .eq("id", value: id)
             .execute()
     }
 
     static func updatePronunciationScore(id: String, score: Int) async throws {
         try await supabase
-            .from("vocab_list")
+            .from("user_vocabulary")
             .update(UpdatePronunciationScore(pronunciation_score: score))
-            .eq("ID", value: id)
+            .eq("id", value: id)
             .execute()
+    }
+
+    private static func topicId(for topicName: String?, allowCreate: Bool) async throws -> String? {
+        let name = topicName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let name, !name.isEmpty else { return nil }
+
+        let existing: [TopicRow] = try await supabase
+            .from("topics")
+            .select("id,name")
+            .eq("name", value: name)
+            .limit(1)
+            .execute()
+            .value
+
+        if let topic = existing.first {
+            return topic.id
+        }
+
+        guard allowCreate else { return nil }
+
+        let topic = TopicRow(id: UUID().uuidString, name: name)
+        try await supabase
+            .from("topics")
+            .insert(topic)
+            .execute()
+
+        return topic.id
+    }
+
+    private static func makeCatalogInsert(from vocab: Vocabulary, id: String, topicId: String?, userId: String, asSystem: Bool) -> VocabCatalogInsert {
+        VocabCatalogInsert(
+            id: id,
+            topic_id: topicId,
+            created_by: userId,
+            visibility: asSystem ? "system" : "private",
+            word: normalizedRequiredWord(vocab.vocab),
+            cefr: nilIfEmpty(vocab.CEFR),
+            ipa: nilIfEmpty(vocab.IPA),
+            word_form: nilIfEmpty(vocab.word_form),
+            e_meaning: nilIfEmpty(vocab.E_meaning),
+            ev_meaning: nilIfEmpty(vocab.EV_meaning),
+            v_meaning: nilIfEmpty(vocab.V_meaning),
+            e_example: nilIfEmpty(vocab.E_example),
+            v_example: nilIfEmpty(vocab.V_example),
+            word_family: nilIfEmpty(vocab.word_family),
+            synonymous: nilIfEmpty(vocab.synonymous),
+            antonym: nilIfEmpty(vocab.antonym),
+            bonus: nilIfEmpty(vocab.bonus)
+        )
+    }
+
+    private static func makeCatalogUpdate(from vocab: Vocabulary, topicId: String?) -> VocabCatalogUpdate {
+        VocabCatalogUpdate(
+            topic_id: topicId,
+            word: normalizedRequiredWord(vocab.vocab),
+            cefr: nilIfEmpty(vocab.CEFR),
+            ipa: nilIfEmpty(vocab.IPA),
+            word_form: nilIfEmpty(vocab.word_form),
+            e_meaning: nilIfEmpty(vocab.E_meaning),
+            ev_meaning: nilIfEmpty(vocab.EV_meaning),
+            v_meaning: nilIfEmpty(vocab.V_meaning),
+            e_example: nilIfEmpty(vocab.E_example),
+            v_example: nilIfEmpty(vocab.V_example),
+            word_family: nilIfEmpty(vocab.word_family),
+            synonymous: nilIfEmpty(vocab.synonymous),
+            antonym: nilIfEmpty(vocab.antonym),
+            bonus: nilIfEmpty(vocab.bonus)
+        )
+    }
+
+    private static func mapCatalog(_ row: VocabCatalogRow) -> Vocabulary {
+        Vocabulary(
+            id: row.id,
+            catalog_id: row.id,
+            created_at: row.created_at,
+            topic_id: row.topic_id,
+            topics: row.topics?.name,
+            created_by: row.created_by,
+            visibility: row.visibility,
+            vocab: row.word,
+            CEFR: row.cefr,
+            IPA: row.ipa,
+            word_form: row.word_form,
+            E_meaning: row.e_meaning,
+            EV_meaning: row.ev_meaning,
+            V_meaning: row.v_meaning,
+            E_example: row.e_example,
+            V_example: row.v_example,
+            word_family: row.word_family,
+            synonymous: row.synonymous,
+            antonym: row.antonym,
+            bonus: row.bonus,
+            user_id: row.created_by,
+            learning_level: 0
+        )
+    }
+
+    private static func mapUserVocabulary(_ row: UserVocabularyRow) -> Vocabulary? {
+        guard let catalog = row.vocab_catalog else { return nil }
+        return Vocabulary(
+            id: row.id,
+            catalog_id: catalog.id,
+            user_vocabulary_id: row.id,
+            created_at: catalog.created_at,
+            saved_at: row.saved_at,
+            topic_id: catalog.topic_id,
+            topics: catalog.topics?.name,
+            created_by: catalog.created_by,
+            visibility: catalog.visibility,
+            vocab: catalog.word,
+            CEFR: catalog.cefr,
+            IPA: catalog.ipa,
+            word_form: catalog.word_form,
+            E_meaning: catalog.e_meaning,
+            EV_meaning: catalog.ev_meaning,
+            V_meaning: catalog.v_meaning,
+            E_example: catalog.e_example,
+            V_example: catalog.v_example,
+            word_family: catalog.word_family,
+            synonymous: catalog.synonymous,
+            antonym: catalog.antonym,
+            bonus: catalog.bonus,
+            user_id: row.user_id,
+            learning_level: row.learning_level,
+            next_review: row.next_review,
+            pronunciation_score: row.pronunciation_score
+        )
+    }
+
+    private static func nilIfEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
+    private static func normalizedRequiredWord(_ value: String?) -> String {
+        nilIfEmpty(value) ?? "Untitled"
     }
 }
 

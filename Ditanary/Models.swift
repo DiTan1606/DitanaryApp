@@ -2,8 +2,14 @@ import Foundation
 
 struct Vocabulary: Identifiable, Codable, Hashable {
     var id: String?
+    var catalog_id: String?
+    var user_vocabulary_id: String?
     var created_at: String?
+    var saved_at: String?
+    var topic_id: String?
     var topics: String?
+    var created_by: String?
+    var visibility: String?
     var vocab: String?
     var CEFR: String?
     var IPA: String?
@@ -24,8 +30,14 @@ struct Vocabulary: Identifiable, Codable, Hashable {
     
     enum CodingKeys: String, CodingKey {
         case id = "ID"
+        case catalog_id
+        case user_vocabulary_id
         case created_at
+        case saved_at
+        case topic_id
         case topics
+        case created_by
+        case visibility
         case vocab
         case CEFR
         case IPA
@@ -46,8 +58,14 @@ struct Vocabulary: Identifiable, Codable, Hashable {
     }
     
     init(id: String? = UUID().uuidString,
+         catalog_id: String? = nil,
+         user_vocabulary_id: String? = nil,
          created_at: String? = nil,
+         saved_at: String? = nil,
+         topic_id: String? = nil,
          topics: String? = nil,
+         created_by: String? = nil,
+         visibility: String? = nil,
          vocab: String? = nil,
          CEFR: String? = nil,
          IPA: String? = nil,
@@ -66,8 +84,14 @@ struct Vocabulary: Identifiable, Codable, Hashable {
          next_review: String? = nil,
          pronunciation_score: Int? = nil) {
         self.id = id
+        self.catalog_id = catalog_id
+        self.user_vocabulary_id = user_vocabulary_id
         self.created_at = created_at
+        self.saved_at = saved_at
+        self.topic_id = topic_id
         self.topics = topics
+        self.created_by = created_by
+        self.visibility = visibility
         self.vocab = vocab
         self.CEFR = CEFR
         self.IPA = IPA

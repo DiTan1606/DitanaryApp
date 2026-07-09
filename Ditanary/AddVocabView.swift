@@ -4,6 +4,7 @@ struct AddVocabView: View {
     @Environment(\.dismiss) var dismiss
     
     var existing: Vocabulary?
+    var saveAsSystem: Bool
     var onComplete: () -> Void
     
     @State private var vocab = ""
@@ -24,8 +25,9 @@ struct AddVocabView: View {
     @State private var isSaving = false
     @State private var errorMessage = ""
     
-    init(existing: Vocabulary? = nil, onComplete: @escaping () -> Void) {
+    init(existing: Vocabulary? = nil, saveAsSystem: Bool = false, onComplete: @escaping () -> Void) {
         self.existing = existing
+        self.saveAsSystem = saveAsSystem
         self.onComplete = onComplete
         
         if let v = existing {
@@ -138,7 +140,7 @@ struct AddVocabView: View {
                 try await VocabularyRepository.update(newVocab)
             } else {
                 // Insert
-                try await VocabularyRepository.insert(newVocab)
+                try await VocabularyRepository.insert(newVocab, asSystem: saveAsSystem)
             }
             
             DispatchQueue.main.async {

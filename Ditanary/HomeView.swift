@@ -5,7 +5,7 @@ struct HomeView: View {
     
     @State private var storeVocabs: [Vocabulary] = []
     @State private var myVocabs: [Vocabulary] = [] // Store full objects for progress
-    @State private var myVocabsByTopic: [String: Set<String>] = [:]
+    @State private var myCatalogIdsByTopic: [String: Set<String>] = [:]
     
     @State private var isLoading = false
     @State private var isDownloading = false
@@ -221,13 +221,13 @@ struct HomeView: View {
     @ViewBuilder
     func topicRow(topic: String) -> some View {
         let topicVocabs = groupedStoreVocabs[topic] ?? []
-        let myWordsInTopic = myVocabsByTopic[topic] ?? []
+        let myCatalogIdsInTopic = myCatalogIdsByTopic[topic] ?? []
         let missingVocabs = topicVocabs.filter { adminVocab in
-            guard let word = adminVocab.vocab?.trimmingCharacters(in: .whitespaces).lowercased() else { return false }
-            return !myWordsInTopic.contains(word)
+            guard let catalogId = adminVocab.catalog_id ?? adminVocab.id else { return false }
+            return !myCatalogIdsInTopic.contains(catalogId)
         }
         
-        let hasDownloadedSome = !myWordsInTopic.isEmpty
+        let hasDownloadedSome = !myCatalogIdsInTopic.isEmpty
         let isFullyDownloaded = hasDownloadedSome && missingVocabs.isEmpty
         let needsUpdate = hasDownloadedSome && !missingVocabs.isEmpty
         
@@ -330,14 +330,15 @@ struct HomeView: View {
             
             var dict: [String: Set<String>] = [:]
             for v in fetched {
-                if let topic = v.topics?.trimmingCharacters(in: .whitespaces), !topic.isEmpty,
-                   let word = v.vocab?.trimmingCharacters(in: .whitespaces).lowercased() {
-                    dict[topic, default: []].insert(word)
+                if let topic = v.topics?.trimmingCharacters(in: .whitespaces), !topic.isEmpty {
+                    if let catalogId = v.catalog_id {
+                        dict[topic, default: []].insert(catalogId)
+                    }
                 }
             }
             DispatchQueue.main.async {
                 self.myVocabs = fetched
-                self.myVocabsByTopic = dict
+                self.myCatalogIdsByTopic = dict
             }
         } catch {
             print("Lỗi lấy my topics: \(error)")
@@ -399,7 +400,6 @@ struct HomeView: View {
         
         let myNewVocabs = vocabsToDownload.map { v -> Vocabulary in
             var newVocab = v
-            newVocab.id = UUID().uuidString
             newVocab.user_id = myUserId
             newVocab.created_at = nil
             return newVocab
@@ -410,8 +410,8 @@ struct HomeView: View {
             
             DispatchQueue.main.async {
                 isDownloading = false
-                let newWords = myNewVocabs.compactMap { $0.vocab?.trimmingCharacters(in: .whitespaces).lowercased() }
-                myVocabsByTopic[topicName, default: []].formUnion(newWords)
+                let newCatalogIds = myNewVocabs.compactMap { $0.catalog_id ?? $0.id }
+                myCatalogIdsByTopic[topicName, default: []].formUnion(newCatalogIds)
                 alertMessage = "Tải thành công \(myNewVocabs.count) từ!"
                 showAlert = true
             }

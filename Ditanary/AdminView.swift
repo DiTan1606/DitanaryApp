@@ -77,6 +77,7 @@ struct AdminVocabManagerView: View {
                             TopicDetailView(
                                 topic: topic,
                                 vocabs: groupedVocabs[topic] ?? [],
+                                saveAsSystem: true,
                                 onRefresh: {
                                     Task { await fetchSystemVocabs() }
                                 }
@@ -113,14 +114,14 @@ struct AdminVocabManagerView: View {
             await fetchSystemVocabs()
         }
         .sheet(isPresented: $showingAdd) {
-            AddVocabView(onComplete: {
+            AddVocabView(saveAsSystem: true, onComplete: {
                 Task { await fetchSystemVocabs() }
             })
         }
     }
     
     func fetchSystemVocabs() async {
-        // Admin tạo vocab_list với user_id của admin.
+        // Admin quản lý các từ có visibility = system trong vocab_catalog.
         guard let userId = AuthManager.shared.currentUser?.id.uuidString else { return }
         
         isLoading = true

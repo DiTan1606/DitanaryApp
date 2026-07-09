@@ -3,6 +3,7 @@ import SwiftUI
 struct TopicDetailView: View {
     let topic: String
     var vocabs: [Vocabulary]
+    var saveAsSystem: Bool = false
     var onRefresh: () -> Void
     
     @State private var selectedVocabForEdit: Vocabulary? = nil
@@ -26,7 +27,7 @@ struct TopicDetailView: View {
                     let meanings = groupedByWord[word] ?? []
                     let firstMeaning = meanings.first
                     
-                    NavigationLink(destination: WordDetailView(word: word, meanings: meanings, onRefresh: onRefresh)) {
+                    NavigationLink(destination: WordDetailView(word: word, meanings: meanings, saveAsSystem: saveAsSystem, onRefresh: onRefresh)) {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack {
                                 Text(word)
@@ -99,12 +100,14 @@ struct TopicDetailView: View {
                             Label("Xóa từ", systemImage: "trash")
                         }
                         
-                        Button {
-                            selectedVocabForEdit = firstMeaning
-                        } label: {
-                            Label("Sửa", systemImage: "pencil")
+                        if canEdit(firstMeaning) {
+                            Button {
+                                selectedVocabForEdit = firstMeaning
+                            } label: {
+                                Label("Sửa", systemImage: "pencil")
+                            }
+                            .tint(.orange)
                         }
-                        .tint(.orange)
                     }
                 }
             }
@@ -112,7 +115,7 @@ struct TopicDetailView: View {
         .navigationTitle(topic)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $selectedVocabForEdit) { vocab in
-            AddVocabView(existing: vocab, onComplete: {
+            AddVocabView(existing: vocab, saveAsSystem: saveAsSystem, onComplete: {
                 onRefresh()
                 selectedVocabForEdit = nil
             })
@@ -127,11 +130,17 @@ struct TopicDetailView: View {
             print("Xóa thất bại: \(error)")
         }
     }
+
+    private func canEdit(_ item: Vocabulary?) -> Bool {
+        guard let item else { return false }
+        return AuthManager.shared.isAdmin || item.visibility == "private"
+    }
 }
 
 struct WordDetailView: View {
     let word: String
     var meanings: [Vocabulary]
+    var saveAsSystem: Bool = false
     var onRefresh: () -> Void
     
     @State private var selectedVocab: Vocabulary? = nil
@@ -205,12 +214,14 @@ struct WordDetailView: View {
                         Label("Xóa", systemImage: "trash")
                     }
                     
-                    Button {
-                        selectedVocab = item
-                    } label: {
-                        Label("Sửa", systemImage: "pencil")
+                    if canEdit(item) {
+                        Button {
+                            selectedVocab = item
+                        } label: {
+                            Label("Sửa", systemImage: "pencil")
+                        }
+                        .tint(.orange)
                     }
-                    .tint(.orange)
                 }
             }
             
@@ -307,7 +318,7 @@ struct WordDetailView: View {
         }
         .navigationTitle(word)
         .sheet(item: $selectedVocab) { vocab in
-            AddVocabView(existing: vocab, onComplete: {
+            AddVocabView(existing: vocab, saveAsSystem: saveAsSystem, onComplete: {
                 onRefresh()
                 selectedVocab = nil
             })
@@ -380,6 +391,10 @@ struct WordDetailView: View {
         } catch {
             print("Học: \(error)")
         }
+    }
+
+    private func canEdit(_ item: Vocabulary) -> Bool {
+        AuthManager.shared.isAdmin || item.visibility == "private"
     }
     
     struct DetailRow: View {
