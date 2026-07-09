@@ -510,6 +510,10 @@ enum ContributionRepository {
         let reviewed_at: String?
     }
 
+    private struct TopicResubmitUpdate: Encodable {
+        let status: String
+    }
+
     static func submitVocabulary(_ vocab: Vocabulary) async throws {
         guard let userId = await AuthManager.shared.currentUser?.id.uuidString,
               let catalogId = vocab.catalog_id ?? vocab.id else { return }
@@ -668,6 +672,47 @@ enum ContributionRepository {
                 words: (row.topic_submission_words ?? []).map(mapDraftWord)
             )
         }
+    }
+
+    static func fetchUserTopicSubmissions() async throws -> [TopicContribution] {
+        let rows: [TopicSubmissionRow] = try await supabase
+            .from("topic_submissions")
+            .select("""
+            id,requester_id,name,description,status,created_at,
+            topic_submission_words(id,word,cefr,ipa,word_form,e_meaning,ev_meaning,v_meaning,e_example,v_example,word_family,synonymous,antonym,bonus)
+            """)
+            .neq("status", value: "approved")
+            .order("created_at", ascending: false)
+            .execute()
+            .value
+
+        return rows.map { row in
+            TopicContribution(
+                id: row.id,
+                requesterId: row.requester_id,
+                name: row.name,
+                description: row.description,
+                status: row.status,
+                createdAt: row.created_at,
+                words: (row.topic_submission_words ?? []).map(mapDraftWord)
+            )
+        }
+    }
+
+    static func resubmitTopicSubmission(_ submission: TopicContribution) async throws {
+        try await supabase
+            .from("topic_submissions")
+            .update(TopicResubmitUpdate(status: "pending"))
+            .eq("id", value: submission.id)
+            .execute()
+    }
+
+    static func deleteTopicSubmission(_ submission: TopicContribution) async throws {
+        try await supabase
+            .from("topic_submissions")
+            .delete()
+            .eq("id", value: submission.id)
+            .execute()
     }
 
     static func approveTopicSubmission(_ submission: TopicContribution, approvedWordIds: Set<String>? = nil) async throws {

@@ -109,6 +109,21 @@ to authenticated
 using (public.is_admin())
 with check (public.is_admin());
 
+drop policy if exists "Users can resubmit rejected topic submissions" on public.topic_submissions;
+create policy "Users can resubmit rejected topic submissions"
+on public.topic_submissions
+for update
+to authenticated
+using (requester_id = auth.uid() and status = 'rejected')
+with check (requester_id = auth.uid() and status = 'pending');
+
+drop policy if exists "Users can delete rejected topic submissions" on public.topic_submissions;
+create policy "Users can delete rejected topic submissions"
+on public.topic_submissions
+for delete
+to authenticated
+using (requester_id = auth.uid() and status = 'rejected');
+
 drop policy if exists "Users can create words for own topic submissions" on public.topic_submission_words;
 create policy "Users can create words for own topic submissions"
 on public.topic_submission_words
@@ -147,7 +162,7 @@ using (public.is_admin())
 with check (public.is_admin());
 
 grant select, insert, update on public.vocab_submissions to authenticated;
-grant select, insert, update on public.topic_submissions to authenticated;
+grant select, insert, update, delete on public.topic_submissions to authenticated;
 grant select, insert, update on public.topic_submission_words to authenticated;
 
 drop policy if exists "Admins can view user vocabulary" on public.user_vocabulary;
