@@ -169,8 +169,7 @@ struct WordDetailView: View {
     var onRefresh: () -> Void
     
     @State private var selectedVocab: Vocabulary? = nil
-    @State private var practiceTasks: [PronunciationTask] = []
-    @State private var showingPractice = false
+    @State private var practiceSession: PronunciationPracticeSession? = nil
     @State private var isSubmittingContribution = false
     @State private var contributionMessage = ""
     @State private var showingContributionAlert = false
@@ -278,6 +277,7 @@ struct WordDetailView: View {
                     if level >= 6 {
                         let averageScore = pronunciationAverage(for: meanings)
                         let hasPassed = (averageScore ?? 0) >= 70
+                        let isDue = ReviewScheduler.isDue(learningItem, now: Date())
 
                         VStack(spacing: 10) {
                             if hasPassed {
@@ -294,6 +294,18 @@ struct WordDetailView: View {
                             if hasPassed {
                                 Button {
                                     startPronunciationPractice()
+                                } label: {
+                                    reviewInfoCard(
+                                        title: "Đang học (Cấp độ \(level))",
+                                        reviewText: reviewTimeText(for: learningItem.next_review),
+                                        tint: .purple,
+                                        isAction: true
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            } else if isDue {
+                                Button {
+                                    openLearningTab()
                                 } label: {
                                     reviewInfoCard(
                                         title: "Đang học (Cấp độ \(level))",
@@ -395,9 +407,9 @@ struct WordDetailView: View {
                 selectedVocab = nil
             })
         }
-        .fullScreenCover(isPresented: $showingPractice) {
-            PronunciationSessionView(tasks: practiceTasks) {
-                showingPractice = false
+        .fullScreenCover(item: $practiceSession) { session in
+            PronunciationSessionView(tasks: session.tasks) {
+                practiceSession = nil
                 onRefresh()
             }
         }
@@ -422,10 +434,7 @@ struct WordDetailView: View {
     private func startPronunciationPractice() {
         let tasks = makePronunciationTasks(from: meanings)
         guard !tasks.isEmpty else { return }
-        practiceTasks = tasks
-        DispatchQueue.main.async {
-            showingPractice = true
-        }
+        practiceSession = PronunciationPracticeSession(tasks: tasks)
     }
 
     func deleteSingleMeaning(_ item: Vocabulary) async {
@@ -493,7 +502,7 @@ struct WordDetailView: View {
             .font(.headline)
             .foregroundColor(isAction ? .white : .purple)
 
-            Text("=> Cần kiểm tra phát âm trong phần Learning")
+            Text("=> Kiểm tra phát âm ở trang Learning")
                 .font(.subheadline)
                 .foregroundColor(isAction ? .white.opacity(0.9) : .secondary)
         }
@@ -693,4 +702,9 @@ struct WordDetailView: View {
             .padding(.bottom, 2)
         }
     }
+}
+
+private struct PronunciationPracticeSession: Identifiable {
+    let id = UUID()
+    let tasks: [PronunciationTask]
 }
