@@ -293,7 +293,7 @@ struct WordDetailView: View {
 
                             if hasPassed {
                                 Button {
-                                    startPronunciationPractice()
+                                    openLearningTab()
                                 } label: {
                                     reviewInfoCard(
                                         title: "Đang học (Cấp độ \(level))",
