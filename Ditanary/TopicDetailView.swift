@@ -52,8 +52,6 @@ struct TopicDetailView: View {
                                         .padding(.vertical, 2)
                                         .background((score >= 70 ? Color.green : Color.orange).opacity(0.2))
                                         .cornerRadius(4)
-                                    } else {
-                                        learningTag("Kiểm tra phát âm", foreground: .purple, background: .purple.opacity(0.16))
                                     }
                                 } else {
                                     learningTag(
@@ -61,14 +59,6 @@ struct TopicDetailView: View {
                                         foreground: level == 0 ? .red : .orange,
                                         background: (level == 0 ? Color.red : Color.yellow).opacity(0.2)
                                     )
-
-                                    if level > 0 {
-                                        learningTag(
-                                            "Ôn lại: \(ReviewTimeFormatter.text(for: learningItem?.next_review))",
-                                            foreground: .orange,
-                                            background: Color.orange.opacity(0.14)
-                                        )
-                                    }
                                 }
                                 
                                 Spacer()
@@ -88,11 +78,6 @@ struct TopicDetailView: View {
                                     .lineLimit(1) // Thu gọn ở màn hình ngoài
                             }
 
-                            if shouldShowLearningSummary(for: meanings) {
-                                Text(learningSummary(for: meanings))
-                                    .font(.caption)
-                                    .foregroundColor(learningSummaryColor(for: meanings))
-                            }
                         }
                         .padding(.vertical, 4)
                     }
@@ -168,36 +153,6 @@ struct TopicDetailView: View {
             .padding(.vertical, 2)
             .background(background)
             .cornerRadius(4)
-    }
-
-    private func shouldShowLearningSummary(for meanings: [Vocabulary]) -> Bool {
-        !meanings.contains { ($0.learning_level ?? 0) > 0 }
-    }
-
-    private func learningSummary(for meanings: [Vocabulary]) -> String {
-        let learningItems = meanings.filter { ($0.learning_level ?? 0) > 0 }
-        guard let first = learningItems.first else {
-            return "Đưa từ này vào học"
-        }
-
-        let level = first.learning_level ?? 0
-        if level < 6 {
-            return "Ôn lại: \(ReviewTimeFormatter.text(for: first.next_review))"
-        }
-
-        guard let average = pronunciationAverage(for: learningItems) else {
-            return "Kiểm tra phát âm"
-        }
-
-        return "Điểm phát âm: \(average)/100"
-    }
-
-    private func learningSummaryColor(for meanings: [Vocabulary]) -> Color {
-        let learningItems = meanings.filter { ($0.learning_level ?? 0) > 0 }
-        guard let first = learningItems.first else { return .secondary }
-        if (first.learning_level ?? 0) < 6 { return .orange }
-        guard let average = pronunciationAverage(for: learningItems) else { return .purple }
-        return average >= 70 ? .green : .orange
     }
 
     private func pronunciationAverage(for meanings: [Vocabulary]) -> Int? {
