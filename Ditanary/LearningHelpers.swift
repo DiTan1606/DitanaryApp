@@ -64,11 +64,11 @@ enum PronunciationScorer {
 
 enum ReviewScheduler {
     static func nextLearningLevel(from currentLevel: Int) -> Int {
-        min(currentLevel + 1, 6)
+        currentLevel + 1
     }
 
     static func reviewDelayDays(for learningLevel: Int) -> Int {
-        ReviewIntervalSettings.days(for: learningLevel)
+        DitanaryReviewSchedule.days(for: learningLevel)
     }
 
     static func nextReviewDate(for learningLevel: Int, from date: Date) -> Date {
@@ -99,38 +99,41 @@ enum ReviewScheduler {
     }
 }
 
-enum ReviewIntervalSettings {
-    static let defaults = [1: 0, 2: 1, 3: 3, 4: 7, 5: 15]
-    static let ranges = [1: 0...1, 2: 1...3, 3: 3...7, 4: 7...21, 5: 15...45]
-
+enum DitanaryReviewSchedule {
     static func days(for level: Int) -> Int {
-        guard level < 6 else { return 0 }
-        let fallback = defaults[level] ?? 0
-        let stored = UserDefaults.standard.object(forKey: key(for: level)) as? Int ?? fallback
-        return clamped(stored, for: level)
-    }
-
-    static func setDays(_ days: Int, for level: Int) {
-        UserDefaults.standard.set(clamped(days, for: level), forKey: key(for: level))
-    }
-
-    static func reset() {
-        for level in 1...5 {
-            UserDefaults.standard.removeObject(forKey: key(for: level))
+        switch level {
+        case ..<1: return 0
+        case 1: return 0
+        case 2: return 1
+        case 3: return 3
+        case 4: return 7
+        case 5: return 15
+        case 6: return 30
+        case 7: return 60
+        case 8: return 120
+        case 9: return 240
+        default: return 365
         }
     }
 
-    static func range(for level: Int) -> ClosedRange<Int> {
-        ranges[level] ?? 0...0
+    static let visiblePlan: [(title: String, subtitle: String)] = [
+        ("Cấp 0", "Mới tải về, bấm đưa từ này vào học để lên Cấp 1"),
+        ("Cấp 1 -> 2", "Ôn lại trong ngày"),
+        ("Cấp 2 -> 3", "Ôn lại sau 1 ngày"),
+        ("Cấp 3 -> 4", "Ôn lại sau 3 ngày"),
+        ("Cấp 4 -> 5", "Ôn lại sau 7 ngày"),
+        ("Cấp 5 -> 6", "Ôn lại sau 15 ngày"),
+        ("Cấp 6+", "Master, mở khóa luyện phát âm và tiếp tục ôn 30, 60, 120, 240, rồi 365 ngày")
+    ]
+}
+
+enum LearningLevelDisplay {
+    static func bucket(for level: Int) -> Int {
+        level >= 6 ? 6 : max(level, 0)
     }
 
-    private static func clamped(_ days: Int, for level: Int) -> Int {
-        let range = range(for: level)
-        return min(max(days, range.lowerBound), range.upperBound)
-    }
-
-    private static func key(for level: Int) -> String {
-        "review_interval_level_\(level)"
+    static func title(for level: Int) -> String {
+        level >= 6 ? "Master" : "Cấp \(level)"
     }
 }
 
@@ -186,7 +189,7 @@ enum LearningSessionBuilder {
 
             totalLearningWords += 1
             let level = group.first(where: { ($0.learning_level ?? 0) > 0 })?.learning_level ?? 1
-            stats[level, default: 0] += 1
+            stats[LearningLevelDisplay.bucket(for: level), default: 0] += 1
 
             let isDue = group.contains { ReviewScheduler.isDue($0, now: now) }
             let pronunciationScores = group.compactMap(\.pronunciation_score)
@@ -194,9 +197,9 @@ enum LearningSessionBuilder {
                 && pronunciationScores.reduce(0, +) / pronunciationScores.count >= 70
                 && pronunciationScores.count == group.count
 
-            if level == 6 && !hasPassedPronunciation {
+            if level >= 6 && !hasPassedPronunciation {
                 masterDueGroups.append(group)
-            } else if level < 6 && isDue {
+            } else if isDue {
                 dueGroups.append(group)
             }
         }

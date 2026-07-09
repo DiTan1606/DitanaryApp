@@ -267,13 +267,13 @@ struct PronunciationSessionView: View {
         let now = Date()
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let nextDate = Calendar.current.date(byAdding: .year, value: 100, to: now) ?? now
-        let nextStr = formatter.string(from: nextDate)
         
         for task in tasks {
             guard let id = task.meaning.id else { continue }
+            let level = max(task.meaning.learning_level ?? 6, 6)
+            let nextStr = ReviewScheduler.reviewString(for: level, from: now, formatter: formatter)
             do {
-                try await VocabularyRepository.updateLearningData(id: id, learningLevel: 6, nextReview: nextStr)
+                try await VocabularyRepository.updateLearningData(id: id, learningLevel: level, nextReview: nextStr)
             } catch {
                 print("Lỗi update master review cho \(task.word): \(error)")
             }

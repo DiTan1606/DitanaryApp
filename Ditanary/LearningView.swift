@@ -102,7 +102,7 @@ struct LearningView: View {
                         Chart {
                             ForEach(1...6, id: \.self) { level in
                                 BarMark(
-                                    x: .value("Cấp độ", level == 6 ? "Master" : "Cấp \(level)"),
+                                    x: .value("Cấp độ", LearningLevelDisplay.title(for: level)),
                                     y: .value("Số từ", statsByLevel[level] ?? 0)
                                 )
                                 .foregroundStyle(colorForLevel(level))
