@@ -149,3 +149,27 @@ with check (public.is_admin());
 grant select, insert, update on public.vocab_submissions to authenticated;
 grant select, insert, update on public.topic_submissions to authenticated;
 grant select, insert, update on public.topic_submission_words to authenticated;
+
+drop policy if exists "Admins can view user vocabulary" on public.user_vocabulary;
+create policy "Admins can view user vocabulary"
+on public.user_vocabulary
+for select
+to authenticated
+using (public.is_admin());
+
+drop policy if exists "Admins can insert user vocabulary" on public.user_vocabulary;
+create policy "Admins can insert user vocabulary"
+on public.user_vocabulary
+for insert
+to authenticated
+with check (public.is_admin());
+
+drop policy if exists "Admins can create user notifications" on public.notifications;
+create policy "Admins can create user notifications"
+on public.notifications
+for insert
+to authenticated
+with check (public.is_admin());
+
+grant select, insert on public.user_vocabulary to authenticated;
+grant insert on public.notifications to authenticated;

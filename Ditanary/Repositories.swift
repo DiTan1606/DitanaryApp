@@ -672,12 +672,28 @@ enum ContributionRepository {
 
     static func approveTopicSubmission(_ submission: TopicContribution, approvedWordIds: Set<String>? = nil) async throws {
         guard let adminId = await AuthManager.shared.currentUser?.id.uuidString else { return }
-        let topicId = try await topicId(for: submission.name, allowCreate: true)
+        guard let topicId = try await topicId(for: submission.name, allowCreate: true) else { return }
         let approvedWords = submission.words.filter { word in
             approvedWordIds?.contains(word.id) ?? true
         }
-        let catalogRows = approvedWords.map { word in
-            VocabCatalogInsert(
+
+        var reusableRowsByKey = Dictionary(
+            grouping: try await fetchApprovedCatalogRows(topicId: topicId, requesterId: submission.requesterId),
+            by: catalogKey
+        )
+
+        var catalogRows: [VocabCatalogInsert] = []
+        var approvedCatalogIds: [String] = []
+
+        for word in approvedWords {
+            let key = draftWordKey(word)
+            if var reusableRows = reusableRowsByKey[key], let existing = reusableRows.popLast() {
+                approvedCatalogIds.append(existing.id)
+                reusableRowsByKey[key] = reusableRows
+                continue
+            }
+
+            let row = VocabCatalogInsert(
                 id: UUID().uuidString,
                 topic_id: topicId,
                 created_by: submission.requesterId,
@@ -696,23 +712,27 @@ enum ContributionRepository {
                 antonym: nilIfEmpty(word.antonym),
                 bonus: nilIfEmpty(word.bonus)
             )
+            catalogRows.append(row)
+            approvedCatalogIds.append(row.id)
         }
 
-        guard !catalogRows.isEmpty else {
+        guard !approvedCatalogIds.isEmpty else {
             try await markTopicSubmission(submission.id, status: "approved", reviewerId: adminId)
             return
         }
 
-        try await supabase
-            .from("vocab_catalog")
-            .insert(catalogRows)
-            .execute()
+        if !catalogRows.isEmpty {
+            try await supabase
+                .from("vocab_catalog")
+                .insert(catalogRows)
+                .execute()
+        }
 
-        let userRows = catalogRows.map {
+        let userRows = approvedCatalogIds.map {
             UserVocabularyInsert(
                 id: UUID().uuidString,
                 user_id: submission.requesterId,
-                vocab_id: $0.id,
+                vocab_id: $0,
                 learning_level: 0,
                 next_review: nil,
                 pronunciation_score: nil
@@ -728,7 +748,7 @@ enum ContributionRepository {
         try await sendNotification(
             userId: submission.requesterId,
             title: "Topic nháp đã được duyệt",
-            content: "\"\(submission.name)\" đã được duyệt với \(catalogRows.count) từ và tự động thêm vào kho từ của bạn."
+            content: "\"\(submission.name)\" đã được duyệt với \(approvedCatalogIds.count) từ và tự động thêm vào kho từ của bạn."
         )
     }
 
@@ -787,6 +807,17 @@ enum ContributionRepository {
         return topic.id
     }
 
+    private static func fetchApprovedCatalogRows(topicId: String, requesterId: String) async throws -> [VocabCatalogRow] {
+        try await supabase
+            .from("vocab_catalog")
+            .select("id,created_at,topic_id,created_by,visibility,word,cefr,ipa,word_form,e_meaning,ev_meaning,v_meaning,e_example,v_example,word_family,synonymous,antonym,bonus")
+            .eq("topic_id", value: topicId)
+            .eq("created_by", value: requesterId)
+            .eq("visibility", value: "system")
+            .execute()
+            .value
+    }
+
     private static func mapCatalog(_ row: VocabCatalogRow) -> Vocabulary {
         Vocabulary(
             id: row.id,
@@ -840,6 +871,28 @@ enum ContributionRepository {
 
     private static func normalizedRequiredWord(_ value: String?) -> String {
         nilIfEmpty(value) ?? "Untitled"
+    }
+
+    private static func draftWordKey(_ word: TopicDraftWordInput) -> String {
+        [
+            normalizedKey(word.word),
+            normalizedKey(word.eMeaning),
+            normalizedKey(word.evMeaning),
+            normalizedKey(word.vMeaning)
+        ].joined(separator: "|")
+    }
+
+    private static func catalogKey(_ row: VocabCatalogRow) -> String {
+        [
+            normalizedKey(row.word),
+            normalizedKey(row.e_meaning),
+            normalizedKey(row.ev_meaning),
+            normalizedKey(row.v_meaning)
+        ].joined(separator: "|")
+    }
+
+    private static func normalizedKey(_ value: String?) -> String {
+        nilIfEmpty(value)?.lowercased() ?? ""
     }
 
     private static func nowString() -> String {
