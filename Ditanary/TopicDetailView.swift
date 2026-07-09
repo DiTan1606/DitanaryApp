@@ -286,16 +286,31 @@ struct WordDetailView: View {
                                 Button {
                                     openLearningTab()
                                 } label: {
-                                    masterNeedsPronunciationCard()
+                                    masterNeedsPronunciationCard(isAction: true)
                                 }
                                 .buttonStyle(.plain)
                             }
 
-                            reviewInfoCard(
-                                title: "Đang học (Cấp độ \(level))",
-                                reviewText: reviewTimeText(for: learningItem.next_review),
-                                tint: .purple
-                            )
+                            if hasPassed {
+                                Button {
+                                    startPronunciationPractice()
+                                } label: {
+                                    reviewInfoCard(
+                                        title: "Đang học (Cấp độ \(level))",
+                                        reviewText: reviewTimeText(for: learningItem.next_review),
+                                        tint: .purple,
+                                        isAction: true
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                reviewInfoCard(
+                                    title: "Đang học (Cấp độ \(level))",
+                                    reviewText: reviewTimeText(for: learningItem.next_review),
+                                    tint: .purple,
+                                    isAction: false
+                                )
+                            }
                         }
                         .listRowBackground(Color.clear)
                     } else {
@@ -303,12 +318,20 @@ struct WordDetailView: View {
                             Button {
                                 openLearningTab()
                             } label: {
-                                learningProgressCard(level: level, reviewText: reviewTimeText(for: learningItem.next_review))
+                                learningProgressCard(
+                                    level: level,
+                                    reviewText: reviewTimeText(for: learningItem.next_review),
+                                    isAction: true
+                                )
                             }
                             .buttonStyle(.plain)
                             .listRowBackground(Color.clear)
                         } else {
-                            learningProgressCard(level: level, reviewText: reviewTimeText(for: learningItem.next_review))
+                            learningProgressCard(
+                                level: level,
+                                reviewText: reviewTimeText(for: learningItem.next_review),
+                                isAction: false
+                            )
                                 .listRowBackground(Color.clear)
                         }
                     }
@@ -396,6 +419,15 @@ struct WordDetailView: View {
         NotificationCenter.default.post(name: .openLearningTab, object: nil)
     }
 
+    private func startPronunciationPractice() {
+        let tasks = makePronunciationTasks(from: meanings)
+        guard !tasks.isEmpty else { return }
+        practiceTasks = tasks
+        DispatchQueue.main.async {
+            showingPractice = true
+        }
+    }
+
     func deleteSingleMeaning(_ item: Vocabulary) async {
         guard let id = item.id else { return }
         do {
@@ -433,41 +465,41 @@ struct WordDetailView: View {
         AuthManager.shared.isAdmin || item.visibility == "private"
     }
 
-    private func learningProgressCard(level: Int, reviewText: String) -> some View {
+    private func learningProgressCard(level: Int, reviewText: String, isAction: Bool) -> some View {
         VStack(spacing: 5) {
             HStack {
                 Image(systemName: "checkmark.seal.fill")
                 Text("Đang học (Cấp độ \(level)/6)")
             }
             .font(.headline)
-            .foregroundColor(.orange)
+            .foregroundColor(isAction ? .white : .orange)
 
             Text("=> Ôn lại: \(reviewText)")
                 .font(.subheadline)
-                .foregroundColor(.secondary)
+                .foregroundColor(isAction ? .white.opacity(0.9) : .secondary)
         }
         .frame(maxWidth: .infinity)
         .padding()
-        .background(Color.green.opacity(0.1))
+        .background(isAction ? Color.orange : Color.green.opacity(0.1))
         .cornerRadius(10)
     }
 
-    private func masterNeedsPronunciationCard() -> some View {
+    private func masterNeedsPronunciationCard(isAction: Bool) -> some View {
         VStack(spacing: 5) {
             HStack {
                 Image(systemName: "star.fill")
                 Text("Đã master từ này")
             }
             .font(.headline)
-            .foregroundColor(.purple)
+            .foregroundColor(isAction ? .white : .purple)
 
             Text("=> Cần kiểm tra phát âm trong phần Learning")
                 .font(.subheadline)
-                .foregroundColor(.secondary)
+                .foregroundColor(isAction ? .white.opacity(0.9) : .secondary)
         }
         .frame(maxWidth: .infinity)
         .padding()
-        .background(Color.purple.opacity(0.1))
+        .background(isAction ? Color.purple : Color.purple.opacity(0.1))
         .cornerRadius(10)
     }
 
@@ -494,10 +526,7 @@ struct WordDetailView: View {
                 .padding(.top, 2)
             }
 
-            Button(action: {
-                practiceTasks = makePronunciationTasks(from: meanings)
-                showingPractice = true
-            }) {
+            Button(action: startPronunciationPractice) {
                 Text("Luyện phát âm ngay")
                     .font(.subheadline)
                     .bold()
@@ -515,22 +544,22 @@ struct WordDetailView: View {
         .cornerRadius(10)
     }
 
-    private func reviewInfoCard(title: String, reviewText: String, tint: Color) -> some View {
+    private func reviewInfoCard(title: String, reviewText: String, tint: Color, isAction: Bool) -> some View {
         VStack(spacing: 5) {
             HStack {
                 Image(systemName: "clock.badge.checkmark.fill")
                 Text(title)
             }
             .font(.headline)
-            .foregroundColor(tint)
+            .foregroundColor(isAction ? .white : tint)
 
             Text("=> Ôn lại: \(reviewText)")
                 .font(.subheadline)
-                .foregroundColor(.secondary)
+                .foregroundColor(isAction ? .white.opacity(0.9) : .secondary)
         }
         .frame(maxWidth: .infinity)
         .padding()
-        .background(tint.opacity(0.08))
+        .background(isAction ? tint : tint.opacity(0.08))
         .cornerRadius(10)
     }
 
