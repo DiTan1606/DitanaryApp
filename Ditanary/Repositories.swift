@@ -5,6 +5,18 @@ enum VocabularyRepository {
     private struct TopicRow: Codable {
         let id: String
         let name: String
+        let description: String?
+        let visibility: String?
+        let owner_id: String?
+        let created_at: String?
+    }
+
+    private struct TopicInsert: Encodable {
+        let id: String
+        let name: String
+        let description: String?
+        let visibility: String
+        let owner_id: String?
     }
 
     private struct VocabCatalogRow: Codable {
@@ -92,6 +104,10 @@ enum VocabularyRepository {
         let vocab_catalog: VocabCatalogRow?
     }
 
+    private struct TopicSubmissionLookup: Decodable {
+        let id: String
+    }
+
     static func fetchUserVocabs(userId: String, ordered: Bool = false) async throws -> [Vocabulary] {
         let selectColumns = """
         id,user_id,vocab_id,learning_level,next_review,pronunciation_score,saved_at,
@@ -153,14 +169,19 @@ enum VocabularyRepository {
             .execute()
     }
 
-    static func insert(_ vocab: Vocabulary, asSystem: Bool = false) async throws {
+    static func insert(_ vocab: Vocabulary, asSystem: Bool = false, preferredTopicId: String? = nil) async throws {
         guard let userId = await AuthManager.shared.currentUser?.id.uuidString else { return }
         let catalogId = vocab.catalog_id ?? vocab.id ?? UUID().uuidString
-        let topicId = try await topicId(for: vocab.topics, allowCreate: asSystem)
+        let resolvedTopicId: String?
+        if let preferredTopicId {
+            resolvedTopicId = preferredTopicId
+        } else {
+            resolvedTopicId = try await topicId(for: vocab.topics, allowCreate: asSystem)
+        }
 
         try await supabase
             .from("vocab_catalog")
-            .insert(makeCatalogInsert(from: vocab, id: catalogId, topicId: topicId, userId: userId, asSystem: asSystem))
+            .insert(makeCatalogInsert(from: vocab, id: catalogId, topicId: resolvedTopicId, userId: userId, asSystem: asSystem))
             .execute()
 
         if !asSystem {
@@ -182,11 +203,17 @@ enum VocabularyRepository {
 
     static func update(_ vocab: Vocabulary) async throws {
         guard let catalogId = vocab.catalog_id ?? (vocab.user_vocabulary_id == nil ? vocab.id : nil) else { return }
-        let topicId = try await topicId(for: vocab.topics, allowCreate: await AuthManager.shared.isAdmin)
+        let isAdmin = await AuthManager.shared.isAdmin
+        let resolvedTopicId: String?
+        if !isAdmin, let existingTopicId = vocab.topic_id {
+            resolvedTopicId = existingTopicId
+        } else {
+            resolvedTopicId = try await topicId(for: vocab.topics, allowCreate: isAdmin)
+        }
 
         try await supabase
             .from("vocab_catalog")
-            .update(makeCatalogUpdate(from: vocab, topicId: topicId))
+            .update(makeCatalogUpdate(from: vocab, topicId: resolvedTopicId))
             .eq("id", value: catalogId)
             .execute()
     }
@@ -240,6 +267,105 @@ enum VocabularyRepository {
             .execute()
     }
 
+    static func createPrivateTopic(name: String, description: String?) async throws -> UserTopic {
+        guard let userId = await AuthManager.shared.currentUser?.id.uuidString.lowercased() else {
+            throw NSError(domain: "Ditanary", code: 401, userInfo: [NSLocalizedDescriptionKey: "Chưa đăng nhập."])
+        }
+
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            throw NSError(domain: "Ditanary", code: 400, userInfo: [NSLocalizedDescriptionKey: "Tên topic không được để trống."])
+        }
+
+        let row = TopicInsert(
+            id: UUID().uuidString,
+            name: trimmedName,
+            description: nilIfEmpty(description),
+            visibility: "private",
+            owner_id: userId
+        )
+
+        let inserted: [UserTopic] = try await supabase
+            .from("topics")
+            .insert(row)
+            .select("id,name,description,visibility,owner_id,created_at")
+            .execute()
+            .value
+
+        guard let topic = inserted.first else {
+            throw NSError(domain: "Ditanary", code: 500, userInfo: [NSLocalizedDescriptionKey: "Không tạo được topic."])
+        }
+
+        return topic
+    }
+
+    static func fetchUserPrivateTopics(userId: String) async throws -> [UserTopic] {
+        try await supabase
+            .from("topics")
+            .select("id,name,description,visibility,owner_id,created_at")
+            .eq("owner_id", value: userId)
+            .eq("visibility", value: "private")
+            .order("created_at", ascending: false)
+            .execute()
+            .value
+    }
+
+    static func deletePrivateTopic(_ topic: UserTopic) async throws {
+        guard let userId = await AuthManager.shared.currentUser?.id.uuidString.lowercased() else {
+            throw NSError(domain: "Ditanary", code: 401, userInfo: [NSLocalizedDescriptionKey: "Chưa đăng nhập."])
+        }
+
+        guard topic.visibility == "private" else {
+            throw NSError(domain: "Ditanary", code: 400, userInfo: [NSLocalizedDescriptionKey: "Chỉ có thể xoá topic riêng."])
+        }
+
+        if let ownerId = topic.owner_id?.lowercased(), ownerId != userId {
+            throw NSError(domain: "Ditanary", code: 403, userInfo: [NSLocalizedDescriptionKey: "Bạn không có quyền xoá topic này."])
+        }
+
+        let linkedVocabs: [VocabCatalogRow] = try await supabase
+            .from("vocab_catalog")
+            .select("id")
+            .eq("topic_id", value: topic.id)
+            .limit(1)
+            .execute()
+            .value
+
+        guard linkedVocabs.isEmpty else {
+            throw NSError(domain: "Ditanary", code: 400, userInfo: [NSLocalizedDescriptionKey: "Chỉ có thể xoá topic khi chưa có từ vựng nào."])
+        }
+
+        let pendingSubmissions: [TopicSubmissionLookup] = try await supabase
+            .from("topic_submissions")
+            .select("id")
+            .eq("requester_id", value: userId)
+            .eq("topic_id", value: topic.id)
+            .eq("status", value: "pending")
+            .limit(1)
+            .execute()
+            .value
+
+        guard pendingSubmissions.isEmpty else {
+            throw NSError(domain: "Ditanary", code: 400, userInfo: [NSLocalizedDescriptionKey: "Topic đang chờ duyệt, chưa thể xoá."])
+        }
+
+        try await supabase
+            .from("topic_submissions")
+            .delete()
+            .eq("requester_id", value: userId)
+            .eq("topic_id", value: topic.id)
+            .eq("status", value: "rejected")
+            .execute()
+
+        try await supabase
+            .from("topics")
+            .delete()
+            .eq("id", value: topic.id)
+            .eq("owner_id", value: userId)
+            .eq("visibility", value: "private")
+            .execute()
+    }
+
     private static func topicId(for topicName: String?, allowCreate: Bool) async throws -> String? {
         let name = topicName?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let name, !name.isEmpty else { return nil }
@@ -258,7 +384,7 @@ enum VocabularyRepository {
 
         guard allowCreate else { return nil }
 
-        let topic = TopicRow(id: UUID().uuidString, name: name)
+        let topic = TopicInsert(id: UUID().uuidString, name: name, description: nil, visibility: "system", owner_id: nil)
         try await supabase
             .from("topics")
             .insert(topic)
@@ -378,33 +504,6 @@ enum VocabularyRepository {
 }
 
 enum ContributionRepository {
-    private struct TopicRow: Codable {
-        let id: String
-        let name: String
-    }
-
-    private struct VocabCatalogRow: Codable {
-        let id: String
-        let created_at: String?
-        let topic_id: String?
-        let created_by: String?
-        let visibility: String?
-        let word: String?
-        let cefr: String?
-        let ipa: String?
-        let word_form: String?
-        let e_meaning: String?
-        let ev_meaning: String?
-        let v_meaning: String?
-        let e_example: String?
-        let v_example: String?
-        let word_family: String?
-        let synonymous: String?
-        let antonym: String?
-        let bonus: String?
-        let topics: TopicRow?
-    }
-
     private struct VocabSubmissionInsert: Encodable {
         let id: String
         let requester_id: String
@@ -419,12 +518,12 @@ enum ContributionRepository {
         let catalog_id: String?
         let status: String
         let created_at: String?
-        let vocab_catalog: VocabCatalogRow?
     }
 
     private struct TopicSubmissionInsert: Encodable {
         let id: String
         let requester_id: String
+        let topic_id: String?
         let name: String
         let description: String?
         let status: String
@@ -433,6 +532,7 @@ enum ContributionRepository {
     private struct TopicSubmissionWordInsert: Encodable {
         let id: String
         let submission_id: String
+        let catalog_id: String?
         let word: String
         let cefr: String?
         let ipa: String?
@@ -450,6 +550,7 @@ enum ContributionRepository {
 
     private struct TopicSubmissionWordRow: Decodable {
         let id: String
+        let catalog_id: String?
         let word: String
         let cefr: String?
         let ipa: String?
@@ -468,50 +569,12 @@ enum ContributionRepository {
     private struct TopicSubmissionRow: Decodable {
         let id: String
         let requester_id: String
+        let topic_id: String?
         let name: String
         let description: String?
         let status: String
         let created_at: String?
         let topic_submission_words: [TopicSubmissionWordRow]?
-    }
-
-    private struct VocabCatalogInsert: Encodable {
-        let id: String
-        let topic_id: String?
-        let created_by: String?
-        let visibility: String
-        let word: String
-        let cefr: String?
-        let ipa: String?
-        let word_form: String?
-        let e_meaning: String?
-        let ev_meaning: String?
-        let v_meaning: String?
-        let e_example: String?
-        let v_example: String?
-        let word_family: String?
-        let synonymous: String?
-        let antonym: String?
-        let bonus: String?
-    }
-
-    private struct UserVocabularyInsert: Encodable {
-        let id: String
-        let user_id: String
-        let vocab_id: String
-        let learning_level: Int
-        let next_review: String?
-        let pronunciation_score: Int?
-    }
-
-    private struct ReviewUpdate: Encodable {
-        let status: String
-        let reviewed_by: String?
-        let reviewed_at: String?
-    }
-
-    private struct TopicResubmitUpdate: Encodable {
-        let status: String
     }
 
     static func submitVocabulary(_ vocab: Vocabulary) async throws {
@@ -530,30 +593,6 @@ enum ContributionRepository {
             .from("vocab_submissions")
             .insert(submission)
             .execute()
-    }
-
-    static func fetchPendingVocabularySubmissions() async throws -> [VocabContribution] {
-        let rows: [VocabSubmissionRow] = try await supabase
-            .from("vocab_submissions")
-            .select("""
-            id,requester_id,catalog_id,status,created_at,
-            vocab_catalog(id,created_at,topic_id,created_by,visibility,word,cefr,ipa,word_form,e_meaning,ev_meaning,v_meaning,e_example,v_example,word_family,synonymous,antonym,bonus,topics(id,name))
-            """)
-            .eq("status", value: "pending")
-            .order("created_at", ascending: true)
-            .execute()
-            .value
-
-        return rows.compactMap { row in
-            guard let catalog = row.vocab_catalog else { return nil }
-            return VocabContribution(
-                id: row.id,
-                requesterId: row.requester_id,
-                status: row.status,
-                createdAt: row.created_at,
-                vocab: mapCatalog(catalog)
-            )
-        }
     }
 
     static func fetchUserVocabularySubmissionStatuses() async throws -> [VocabSubmissionStatus] {
@@ -575,46 +614,24 @@ enum ContributionRepository {
         }
     }
 
-    static func approveVocabularySubmission(_ submission: VocabContribution) async throws {
-        guard let catalogId = submission.vocab.catalog_id ?? submission.vocab.id else { return }
-
-        try await supabase
-            .from("vocab_catalog")
-            .update(["visibility": "system"] as [String: String])
-            .eq("id", value: catalogId)
-            .execute()
-
-        try await markVocabSubmission(submission.id, status: "approved")
-        try await sendNotification(
-            userId: submission.requesterId,
-            title: "Từ đã được duyệt",
-            content: "\"\(submission.vocab.vocab ?? "Từ vựng")\" đã được bổ sung vào bộ từ hệ thống."
-        )
-    }
-
-    static func rejectVocabularySubmission(_ submission: VocabContribution) async throws {
-        try await markVocabSubmission(submission.id, status: "rejected")
-        try await sendNotification(
-            userId: submission.requesterId,
-            title: "Từ chưa được duyệt",
-            content: "\"\(submission.vocab.vocab ?? "Từ vựng")\" chưa được duyệt. Bạn có thể chỉnh lại rồi gửi duyệt lại."
-        )
-    }
-
-    static func submitTopicDraft(name: String, description: String?, words: [TopicDraftWordInput]) async throws {
+    static func submitPrivateTopicForReview(topic: UserTopic, vocabs: [Vocabulary]) async throws {
         guard let userId = await AuthManager.shared.currentUser?.id.uuidString else { return }
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty else { return }
 
-        let validWords = words.filter { !$0.word.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        guard !validWords.isEmpty else { return }
+        let validVocabs = vocabs.filter {
+            ($0.catalog_id ?? $0.id) != nil &&
+            !($0.vocab ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard !validVocabs.isEmpty else {
+            throw NSError(domain: "Ditanary", code: 400, userInfo: [NSLocalizedDescriptionKey: "Topic cần có ít nhất một từ để gửi duyệt."])
+        }
 
         let submissionId = UUID().uuidString
         let submission = TopicSubmissionInsert(
             id: submissionId,
             requester_id: userId,
-            name: trimmedName,
-            description: nilIfEmpty(description),
+            topic_id: topic.id,
+            name: topic.name.trimmingCharacters(in: .whitespacesAndNewlines),
+            description: nilIfEmpty(topic.description),
             status: "pending"
         )
 
@@ -623,23 +640,25 @@ enum ContributionRepository {
             .insert(submission)
             .execute()
 
-        let wordRows = validWords.map { word in
-            TopicSubmissionWordInsert(
+        let wordRows = validVocabs.compactMap { vocab -> TopicSubmissionWordInsert? in
+            guard let catalogId = vocab.catalog_id ?? vocab.id else { return nil }
+            return TopicSubmissionWordInsert(
                 id: UUID().uuidString,
                 submission_id: submissionId,
-                word: normalizedRequiredWord(word.word),
-                cefr: nilIfEmpty(word.cefr),
-                ipa: nilIfEmpty(word.ipa),
-                word_form: nilIfEmpty(word.wordForm),
-                e_meaning: nilIfEmpty(word.eMeaning),
-                ev_meaning: nilIfEmpty(word.evMeaning),
-                v_meaning: nilIfEmpty(word.vMeaning),
-                e_example: nilIfEmpty(word.eExample),
-                v_example: nilIfEmpty(word.vExample),
-                word_family: nilIfEmpty(word.wordFamily),
-                synonymous: nilIfEmpty(word.synonymous),
-                antonym: nilIfEmpty(word.antonym),
-                bonus: nilIfEmpty(word.bonus)
+                catalog_id: catalogId,
+                word: normalizedRequiredWord(vocab.vocab),
+                cefr: nilIfEmpty(vocab.CEFR),
+                ipa: nilIfEmpty(vocab.IPA),
+                word_form: nilIfEmpty(vocab.word_form),
+                e_meaning: nilIfEmpty(vocab.E_meaning),
+                ev_meaning: nilIfEmpty(vocab.EV_meaning),
+                v_meaning: nilIfEmpty(vocab.V_meaning),
+                e_example: nilIfEmpty(vocab.E_example),
+                v_example: nilIfEmpty(vocab.V_example),
+                word_family: nilIfEmpty(vocab.word_family),
+                synonymous: nilIfEmpty(vocab.synonymous),
+                antonym: nilIfEmpty(vocab.antonym),
+                bonus: nilIfEmpty(vocab.bonus)
             )
         }
 
@@ -649,37 +668,12 @@ enum ContributionRepository {
             .execute()
     }
 
-    static func fetchPendingTopicSubmissions() async throws -> [TopicContribution] {
-        let rows: [TopicSubmissionRow] = try await supabase
-            .from("topic_submissions")
-            .select("""
-            id,requester_id,name,description,status,created_at,
-            topic_submission_words(id,word,cefr,ipa,word_form,e_meaning,ev_meaning,v_meaning,e_example,v_example,word_family,synonymous,antonym,bonus)
-            """)
-            .eq("status", value: "pending")
-            .order("created_at", ascending: true)
-            .execute()
-            .value
-
-        return rows.map { row in
-            TopicContribution(
-                id: row.id,
-                requesterId: row.requester_id,
-                name: row.name,
-                description: row.description,
-                status: row.status,
-                createdAt: row.created_at,
-                words: (row.topic_submission_words ?? []).map(mapDraftWord)
-            )
-        }
-    }
-
     static func fetchUserTopicSubmissions() async throws -> [TopicContribution] {
         let rows: [TopicSubmissionRow] = try await supabase
             .from("topic_submissions")
             .select("""
-            id,requester_id,name,description,status,created_at,
-            topic_submission_words(id,word,cefr,ipa,word_form,e_meaning,ev_meaning,v_meaning,e_example,v_example,word_family,synonymous,antonym,bonus)
+            id,requester_id,topic_id,name,description,status,created_at,
+            topic_submission_words(id,catalog_id,word,cefr,ipa,word_form,e_meaning,ev_meaning,v_meaning,e_example,v_example,word_family,synonymous,antonym,bonus)
             """)
             .neq("status", value: "approved")
             .order("created_at", ascending: false)
@@ -690,6 +684,7 @@ enum ContributionRepository {
             TopicContribution(
                 id: row.id,
                 requesterId: row.requester_id,
+                topicId: row.topic_id,
                 name: row.name,
                 description: row.description,
                 status: row.status,
@@ -699,200 +694,11 @@ enum ContributionRepository {
         }
     }
 
-    static func resubmitTopicSubmission(_ submission: TopicContribution) async throws {
-        try await supabase
-            .from("topic_submissions")
-            .update(TopicResubmitUpdate(status: "pending"))
-            .eq("id", value: submission.id)
-            .execute()
-    }
-
-    static func deleteTopicSubmission(_ submission: TopicContribution) async throws {
-        try await supabase
-            .from("topic_submissions")
-            .delete()
-            .eq("id", value: submission.id)
-            .execute()
-    }
-
-    static func approveTopicSubmission(_ submission: TopicContribution, approvedWordIds: Set<String>? = nil) async throws {
-        guard let adminId = await AuthManager.shared.currentUser?.id.uuidString else { return }
-        guard let topicId = try await topicId(for: submission.name, allowCreate: true) else { return }
-        let approvedWords = submission.words.filter { word in
-            approvedWordIds?.contains(word.id) ?? true
-        }
-
-        var reusableRowsByKey = Dictionary(
-            grouping: try await fetchApprovedCatalogRows(topicId: topicId, requesterId: submission.requesterId),
-            by: catalogKey
-        )
-
-        var catalogRows: [VocabCatalogInsert] = []
-        var approvedCatalogIds: [String] = []
-
-        for word in approvedWords {
-            let key = draftWordKey(word)
-            if var reusableRows = reusableRowsByKey[key], let existing = reusableRows.popLast() {
-                approvedCatalogIds.append(existing.id)
-                reusableRowsByKey[key] = reusableRows
-                continue
-            }
-
-            let row = VocabCatalogInsert(
-                id: UUID().uuidString,
-                topic_id: topicId,
-                created_by: submission.requesterId,
-                visibility: "system",
-                word: normalizedRequiredWord(word.word),
-                cefr: nilIfEmpty(word.cefr),
-                ipa: nilIfEmpty(word.ipa),
-                word_form: nilIfEmpty(word.wordForm),
-                e_meaning: nilIfEmpty(word.eMeaning),
-                ev_meaning: nilIfEmpty(word.evMeaning),
-                v_meaning: nilIfEmpty(word.vMeaning),
-                e_example: nilIfEmpty(word.eExample),
-                v_example: nilIfEmpty(word.vExample),
-                word_family: nilIfEmpty(word.wordFamily),
-                synonymous: nilIfEmpty(word.synonymous),
-                antonym: nilIfEmpty(word.antonym),
-                bonus: nilIfEmpty(word.bonus)
-            )
-            catalogRows.append(row)
-            approvedCatalogIds.append(row.id)
-        }
-
-        guard !approvedCatalogIds.isEmpty else {
-            try await markTopicSubmission(submission.id, status: "approved", reviewerId: adminId)
-            return
-        }
-
-        if !catalogRows.isEmpty {
-            try await supabase
-                .from("vocab_catalog")
-                .insert(catalogRows)
-                .execute()
-        }
-
-        let userRows = approvedCatalogIds.map {
-            UserVocabularyInsert(
-                id: UUID().uuidString,
-                user_id: submission.requesterId,
-                vocab_id: $0,
-                learning_level: 0,
-                next_review: nil,
-                pronunciation_score: nil
-            )
-        }
-
-        try await supabase
-            .from("user_vocabulary")
-            .insert(userRows)
-            .execute()
-
-        try await markTopicSubmission(submission.id, status: "approved", reviewerId: adminId)
-        try await sendNotification(
-            userId: submission.requesterId,
-            title: "Topic nháp đã được duyệt",
-            content: "\"\(submission.name)\" đã được duyệt với \(approvedCatalogIds.count) từ và tự động thêm vào kho từ của bạn."
-        )
-    }
-
-    static func rejectTopicSubmission(_ submission: TopicContribution) async throws {
-        try await markTopicSubmission(submission.id, status: "rejected")
-        try await sendNotification(
-            userId: submission.requesterId,
-            title: "Topic nháp chưa được duyệt",
-            content: "\"\(submission.name)\" chưa được duyệt. Bạn có thể tạo lại bản nháp tốt hơn rồi gửi lại."
-        )
-    }
-
-    private static func markVocabSubmission(_ id: String, status: String) async throws {
-        let reviewerId = await AuthManager.shared.currentUser?.id.uuidString
-        try await supabase
-            .from("vocab_submissions")
-            .update(ReviewUpdate(status: status, reviewed_by: reviewerId, reviewed_at: nowString()))
-            .eq("id", value: id)
-            .execute()
-    }
-
-    private static func markTopicSubmission(_ id: String, status: String, reviewerId: String? = nil) async throws {
-        let currentReviewerId = await AuthManager.shared.currentUser?.id.uuidString
-        let reviewer = reviewerId ?? currentReviewerId
-        try await supabase
-            .from("topic_submissions")
-            .update(ReviewUpdate(status: status, reviewed_by: reviewer, reviewed_at: nowString()))
-            .eq("id", value: id)
-            .execute()
-    }
-
-    private static func topicId(for topicName: String, allowCreate: Bool) async throws -> String? {
-        let name = topicName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return nil }
-
-        let existing: [TopicRow] = try await supabase
-            .from("topics")
-            .select("id,name")
-            .eq("name", value: name)
-            .limit(1)
-            .execute()
-            .value
-
-        if let topic = existing.first {
-            return topic.id
-        }
-
-        guard allowCreate else { return nil }
-
-        let topic = TopicRow(id: UUID().uuidString, name: name)
-        try await supabase
-            .from("topics")
-            .insert(topic)
-            .execute()
-
-        return topic.id
-    }
-
-    private static func fetchApprovedCatalogRows(topicId: String, requesterId: String) async throws -> [VocabCatalogRow] {
-        try await supabase
-            .from("vocab_catalog")
-            .select("id,created_at,topic_id,created_by,visibility,word,cefr,ipa,word_form,e_meaning,ev_meaning,v_meaning,e_example,v_example,word_family,synonymous,antonym,bonus")
-            .eq("topic_id", value: topicId)
-            .eq("created_by", value: requesterId)
-            .eq("visibility", value: "system")
-            .execute()
-            .value
-    }
-
-    private static func mapCatalog(_ row: VocabCatalogRow) -> Vocabulary {
-        Vocabulary(
-            id: row.id,
-            catalog_id: row.id,
-            created_at: row.created_at,
-            topic_id: row.topic_id,
-            topics: row.topics?.name,
-            created_by: row.created_by,
-            visibility: row.visibility,
-            vocab: row.word,
-            CEFR: row.cefr,
-            IPA: row.ipa,
-            word_form: row.word_form,
-            E_meaning: row.e_meaning,
-            EV_meaning: row.ev_meaning,
-            V_meaning: row.v_meaning,
-            E_example: row.e_example,
-            V_example: row.v_example,
-            word_family: row.word_family,
-            synonymous: row.synonymous,
-            antonym: row.antonym,
-            bonus: row.bonus,
-            user_id: row.created_by,
-            learning_level: 0
-        )
-    }
 
     private static func mapDraftWord(_ row: TopicSubmissionWordRow) -> TopicDraftWordInput {
         TopicDraftWordInput(
             id: row.id,
+            catalogId: row.catalog_id,
             word: row.word,
             cefr: row.cefr ?? "",
             ipa: row.ipa ?? "",
@@ -918,44 +724,6 @@ enum ContributionRepository {
         nilIfEmpty(value) ?? "Untitled"
     }
 
-    private static func draftWordKey(_ word: TopicDraftWordInput) -> String {
-        [
-            normalizedKey(word.word),
-            normalizedKey(word.eMeaning),
-            normalizedKey(word.evMeaning),
-            normalizedKey(word.vMeaning)
-        ].joined(separator: "|")
-    }
-
-    private static func catalogKey(_ row: VocabCatalogRow) -> String {
-        [
-            normalizedKey(row.word),
-            normalizedKey(row.e_meaning),
-            normalizedKey(row.ev_meaning),
-            normalizedKey(row.v_meaning)
-        ].joined(separator: "|")
-    }
-
-    private static func normalizedKey(_ value: String?) -> String {
-        nilIfEmpty(value)?.lowercased() ?? ""
-    }
-
-    private static func nowString() -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.string(from: Date())
-    }
-
-    private static func sendNotification(userId: String, title: String, content: String) async throws {
-        let notification = Notification(
-            id: UUID().uuidString,
-            user_id: userId,
-            title: title,
-            content: content,
-            is_read: false
-        )
-        try await NotificationRepository.insert(notification)
-    }
 }
 
 enum UserProgressRepository {
@@ -1069,19 +837,6 @@ enum NotificationRepository {
             .eq("id", value: id)
             .execute()
     }
-
-    static func broadcast(title: String, content: String, profiles: [Profile]) async throws {
-        for profile in profiles {
-            let notification = Notification(
-                id: UUID().uuidString,
-                user_id: profile.id,
-                title: title,
-                content: content,
-                is_read: false
-            )
-            try await insert(notification)
-        }
-    }
 }
 
 enum ProfileRepository {
@@ -1097,23 +852,6 @@ enum ProfileRepository {
         return fetched.first?.role
     }
 
-    static func fetchProfiles(ordered: Bool = false) async throws -> [Profile] {
-        if ordered {
-            return try await supabase
-                .from("profiles")
-                .select()
-                .order("created_at", ascending: false)
-                .execute()
-                .value
-        }
-
-        return try await supabase
-            .from("profiles")
-            .select()
-            .execute()
-            .value
-    }
-
     static func updateDisplayName(userId: String, name: String) async throws {
         try await supabase
             .from("profiles")
@@ -1127,29 +865,6 @@ enum ProfileRepository {
             .from("profiles")
             .update(["avatar_url": urlString] as [String: String])
             .eq("id", value: userId)
-            .execute()
-    }
-
-    static func updateProfile(_ profile: Profile) async throws {
-        struct UpdateData: Encodable {
-            let display_name: String
-            let role: String
-        }
-
-        try await supabase
-            .from("profiles")
-            .update(UpdateData(display_name: profile.display_name ?? "", role: profile.role ?? "user"))
-            .eq("id", value: profile.id)
-            .execute()
-    }
-
-    static func deleteUser(id: String) async throws {
-        struct DeleteParams: Encodable {
-            let target_user_id: String
-        }
-
-        try await supabase
-            .rpc("delete_user", params: DeleteParams(target_user_id: id))
             .execute()
     }
 }

@@ -178,8 +178,18 @@ struct Notification: Identifiable, Codable {
     var created_at: String?
 }
 
+struct UserTopic: Identifiable, Codable, Hashable {
+    var id: String
+    var name: String
+    var description: String?
+    var visibility: String?
+    var owner_id: String?
+    var created_at: String?
+}
+
 struct TopicDraftWordInput: Identifiable, Codable {
     var id: String = UUID().uuidString
+    var catalogId: String?
     var word: String = ""
     var cefr: String = ""
     var ipa: String = ""
@@ -195,14 +205,6 @@ struct TopicDraftWordInput: Identifiable, Codable {
     var bonus: String = ""
 }
 
-struct VocabContribution: Identifiable {
-    let id: String
-    let requesterId: String
-    let status: String
-    let createdAt: String?
-    let vocab: Vocabulary
-}
-
 struct VocabSubmissionStatus: Identifiable {
     let id: String
     let catalogId: String
@@ -213,6 +215,7 @@ struct VocabSubmissionStatus: Identifiable {
 struct TopicContribution: Identifiable {
     let id: String
     let requesterId: String
+    let topicId: String?
     let name: String
     let description: String?
     let status: String

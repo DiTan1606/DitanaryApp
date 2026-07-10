@@ -2,37 +2,62 @@ import SwiftUI
 
 struct MyVocabularyView: View {
     @State private var vocabs: [Vocabulary] = []
+    @State private var privateTopics: [UserTopic] = []
     @State private var topicSubmissions: [TopicContribution] = []
     @State private var isLoading = false
-    @State private var showingTopicDraft = false
+    @State private var showingCreateTopic = false
     @State private var alertMessage = ""
     @State private var showingAlert = false
     
-    // Gom nhóm từ vựng theo topics
-    var groupedVocabs: [String: [Vocabulary]] {
-        Dictionary(grouping: vocabs, by: { 
-            if let topic = $0.topics, !topic.trimmingCharacters(in: .whitespaces).isEmpty {
-                return topic.trimmingCharacters(in: .whitespaces)
-            }
-            return "Chưa phân loại"
-        })
+    private var topicItems: [MyVocabularyTopicItem] {
+        var itemsById: [String: MyVocabularyTopicItem] = [:]
+
+        for vocab in vocabs {
+            let topicName = vocab.topics?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let name = topicName?.isEmpty == false ? topicName! : "Chưa phân loại"
+            let key = vocab.topic_id ?? "uncategorized-\(name)"
+            var item = itemsById[key] ?? MyVocabularyTopicItem(id: key, name: name, topic: nil, vocabs: [], submission: nil)
+            item.vocabs.append(vocab)
+            itemsById[key] = item
+        }
+
+        for topic in privateTopics {
+            var item = itemsById[topic.id] ?? MyVocabularyTopicItem(id: topic.id, name: topic.name, topic: topic, vocabs: [], submission: nil)
+            item.topic = topic
+            item.name = topic.name
+            itemsById[topic.id] = item
+        }
+
+        let latestSubmissionByTopic = Dictionary(
+            grouping: topicSubmissions.compactMap { submission -> TopicContribution? in
+                submission.topicId == nil ? nil : submission
+            },
+            by: { $0.topicId ?? "" }
+        ).mapValues { submissions in
+            submissions.sorted { ($0.createdAt ?? "") > ($1.createdAt ?? "") }.first
+        }
+
+        for (topicId, submission) in latestSubmissionByTopic {
+            guard var item = itemsById[topicId], let submission else { continue }
+            item.submission = submission
+            itemsById[topicId] = item
+        }
+
+        return itemsById.values.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
     }
-    
-    // Sắp xếp tên chủ đề theo alphabet
-    var sortedTopics: [String] {
-        groupedVocabs.keys.sorted()
-    }
-    
+
     var body: some View {
         NavigationStack {
             Group {
-                if isLoading && vocabs.isEmpty && topicSubmissions.isEmpty {
+                if isLoading && topicItems.isEmpty {
                     ProgressView("Đang tải dữ liệu...")
-                } else if vocabs.isEmpty && topicSubmissions.isEmpty {
+                } else if topicItems.isEmpty {
                     VStack {
-                        Text("Chưa có từ vựng nào.")
+                        Text("Chưa có bộ từ nào.")
                             .foregroundColor(.secondary)
-                        Text("Hãy tải một bộ từ ở Trang chủ trước, rồi thêm từ riêng trong bộ đó.")
+                        Text("Hãy tải bộ từ ở Trang chủ hoặc tạo topic riêng để học theo sở thích.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
@@ -40,46 +65,22 @@ struct MyVocabularyView: View {
                     }
                 } else {
                     List {
-                        if !vocabs.isEmpty {
+                        if !topicItems.isEmpty {
                             Section("Bộ từ của tôi") {
-                                ForEach(sortedTopics, id: \.self) { topic in
+                                ForEach(topicItems) { item in
                                     NavigationLink {
                                         TopicDetailView(
-                                            topic: topic,
-                                            vocabs: groupedVocabs[topic] ?? [],
+                                            topic: item.name,
+                                            topicInfo: item.topic,
+                                            topicSubmission: item.submission,
+                                            vocabs: item.vocabs,
                                             onRefresh: {
                                                 Task { await fetchVocabs() }
                                             }
                                         )
                                     } label: {
-                                        HStack {
-                                            Text(topic)
-                                                .font(.headline)
-                                            Spacer()
-                                            let topicVocabs = groupedVocabs[topic] ?? []
-                                            let uniqueCount = Set(topicVocabs.compactMap { $0.vocab?.trimmingCharacters(in: .whitespaces).lowercased() }).count
-                                            Text("\(uniqueCount) từ")
-                                                .font(.subheadline)
-                                                .foregroundColor(.secondary)
-                                        }
-                                        .padding(.vertical, 8)
+                                        MyVocabularyTopicRow(item: item)
                                     }
-                                }
-                            }
-                        }
-
-                        if !topicSubmissions.isEmpty {
-                            Section("Topic đang gửi duyệt") {
-                                ForEach(topicSubmissions) { submission in
-                                    TopicSubmissionStatusCard(
-                                        submission: submission,
-                                        onResubmit: {
-                                            Task { await resubmitTopic(submission) }
-                                        },
-                                        onDelete: {
-                                            Task { await deleteTopicSubmission(submission) }
-                                        }
-                                    )
                                 }
                             }
                         }
@@ -93,7 +94,7 @@ struct MyVocabularyView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
-                        showingTopicDraft = true
+                        showingCreateTopic = true
                     } label: {
                         Image(systemName: "folder.badge.plus")
                     }
@@ -107,8 +108,8 @@ struct MyVocabularyView: View {
             } message: {
                 Text(alertMessage)
             }
-            .sheet(isPresented: $showingTopicDraft) {
-                TopicDraftRequestView(onComplete: {
+            .sheet(isPresented: $showingCreateTopic) {
+                PrivateTopicCreateView(onComplete: {
                     Task { await fetchVocabs() }
                 })
             }
@@ -125,12 +126,14 @@ struct MyVocabularyView: View {
         
         do {
             async let fetchedVocabs = VocabularyRepository.fetchUserVocabs(userId: userId, ordered: true)
+            async let fetchedPrivateTopics = VocabularyRepository.fetchUserPrivateTopics(userId: userId)
             async let fetchedSubmissions = ContributionRepository.fetchUserTopicSubmissions()
-            let result = try await (fetchedVocabs, fetchedSubmissions)
+            let result = try await (fetchedVocabs, fetchedPrivateTopics, fetchedSubmissions)
             
             DispatchQueue.main.async {
                 self.vocabs = result.0
-                self.topicSubmissions = result.1
+                self.privateTopics = result.1
+                self.topicSubmissions = result.2
                 self.isLoading = false
             }
         } catch {
@@ -140,129 +143,148 @@ struct MyVocabularyView: View {
             }
         }
     }
-
-    func resubmitTopic(_ submission: TopicContribution) async {
-        do {
-            try await ContributionRepository.resubmitTopicSubmission(submission)
-            await fetchVocabs()
-            DispatchQueue.main.async {
-                alertMessage = "Đã gửi lại topic cho admin duyệt."
-                showingAlert = true
-            }
-        } catch {
-            DispatchQueue.main.async {
-                alertMessage = "Gửi lại thất bại: \(error.localizedDescription)"
-                showingAlert = true
-            }
-        }
-    }
-
-    func deleteTopicSubmission(_ submission: TopicContribution) async {
-        do {
-            try await ContributionRepository.deleteTopicSubmission(submission)
-            await fetchVocabs()
-            DispatchQueue.main.async {
-                alertMessage = "Đã xoá topic nháp."
-                showingAlert = true
-            }
-        } catch {
-            DispatchQueue.main.async {
-                alertMessage = "Xoá thất bại: \(error.localizedDescription)"
-                showingAlert = true
-            }
-        }
-    }
 }
 
-private struct TopicSubmissionStatusCard: View {
-    let submission: TopicContribution
-    let onResubmit: () -> Void
-    let onDelete: () -> Void
+private struct MyVocabularyTopicItem: Identifiable {
+    let id: String
+    var name: String
+    var topic: UserTopic?
+    var vocabs: [Vocabulary]
+    var submission: TopicContribution?
+}
+
+private struct MyVocabularyTopicRow: View {
+    let item: MyVocabularyTopicItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(submission.name)
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Text(item.name)
                         .font(.headline)
-                    Text("\(submission.words.count) từ")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+
+                    if item.topic?.visibility == "private" {
+                        Text("Riêng tư")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.purple)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.purple.opacity(0.12))
+                            .cornerRadius(4)
+                    }
+
+                    if let status = item.submission?.status {
+                        statusBadge(status)
+                    }
                 }
 
-                Spacer()
-
-                statusBadge
-            }
-
-            if let description = submission.description, !description.isEmpty {
-                Text(description)
+                Text("\(uniqueWordCount) từ")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
 
-            ForEach(submission.words.prefix(3)) { word in
-                HStack(spacing: 8) {
-                    Image(systemName: "textformat")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(word.word)
-                        .font(.subheadline)
-                    if !word.vMeaning.isEmpty {
-                        Text("- \(word.vMeaning)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-            }
-
-            if submission.words.count > 3 {
-                Text("+\(submission.words.count - 3) từ khác")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            if submission.status == "rejected" {
-                HStack {
-                    Button {
-                        onResubmit()
-                    } label: {
-                        Label("Gửi duyệt lại", systemImage: "paperplane.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-
-                    Button(role: .destructive) {
-                        onDelete()
-                    } label: {
-                        Label("Xoá", systemImage: "trash")
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .padding(.top, 4)
-            }
+            Spacer()
         }
         .padding(.vertical, 8)
     }
 
+    private var uniqueWordCount: Int {
+        Set(item.vocabs.compactMap { $0.vocab?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }).count
+    }
+
     @ViewBuilder
-    private var statusBadge: some View {
-        if submission.status == "pending" {
-            Label("Chờ duyệt", systemImage: "clock.fill")
-                .font(.caption.bold())
+    private func statusBadge(_ status: String) -> some View {
+        if status == "pending" {
+            Text("Chờ duyệt")
+                .font(.system(size: 10, weight: .bold))
                 .foregroundColor(.orange)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
                 .background(Color.orange.opacity(0.12))
-                .cornerRadius(6)
-        } else {
-            Label("Không duyệt", systemImage: "xmark.circle.fill")
-                .font(.caption.bold())
+                .cornerRadius(4)
+        } else if status == "rejected" {
+            Text("Không duyệt")
+                .font(.system(size: 10, weight: .bold))
                 .foregroundColor(.red)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
                 .background(Color.red.opacity(0.12))
-                .cornerRadius(6)
+                .cornerRadius(4)
+        }
+    }
+}
+
+private struct PrivateTopicCreateView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var name = ""
+    @State private var description = ""
+    @State private var isSaving = false
+    @State private var alertMessage = ""
+    @State private var showingAlert = false
+
+    var onComplete: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Topic riêng") {
+                    TextField("Tên topic", text: $name)
+                    TextField("Mô tả ngắn", text: $description)
+                }
+
+                Section {
+                    Text("Topic riêng chỉ có bạn thấy. Bạn có thể thêm từ và học ngay, khi thấy đủ hay thì gửi admin duyệt để chia sẻ lên hệ thống.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .navigationTitle("Tạo topic")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Hủy") { dismiss() }
+                }
+
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Tạo") {
+                        Task { await createTopic() }
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
+                }
+            }
+            .overlay {
+                if isSaving {
+                    ProgressView("Đang tạo...")
+                        .padding()
+                        .background(Color(.systemBackground).opacity(0.85))
+                        .cornerRadius(10)
+                }
+            }
+            .alert("Thông báo", isPresented: $showingAlert) {
+                Button("OK") {
+                    if alertMessage.contains("Đã tạo") {
+                        onComplete()
+                        dismiss()
+                    }
+                }
+            } message: {
+                Text(alertMessage)
+            }
+        }
+    }
+
+    private func createTopic() async {
+        isSaving = true
+        defer { isSaving = false }
+
+        do {
+            _ = try await VocabularyRepository.createPrivateTopic(name: name, description: description)
+            alertMessage = "Đã tạo topic riêng. Bạn có thể vào topic này để thêm từ và học ngay."
+            showingAlert = true
+        } catch {
+            alertMessage = "Tạo topic thất bại: \(error.localizedDescription)"
+            showingAlert = true
         }
     }
 }

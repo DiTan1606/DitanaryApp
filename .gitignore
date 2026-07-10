@@ -19,6 +19,15 @@ Package.resolved.bak
 # Local config and secrets
 .env
 .env.*
+!.env.example
+!admin-web/.env.example
+
+# Web admin
+admin-web/node_modules/
+admin-web/dist/
+admin-web/*.tsbuildinfo
+admin-web/vite.config.js
+admin-web/vite.config.d.ts
 
 # Root-level logo exports kept outside the asset catalog
 /logo_ditanary.jpeg

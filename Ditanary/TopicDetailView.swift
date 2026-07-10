@@ -1,13 +1,23 @@
 import SwiftUI
 
 struct TopicDetailView: View {
+    @Environment(\.dismiss) private var dismiss
+
     let topic: String
+    var topicInfo: UserTopic? = nil
+    var topicSubmission: TopicContribution? = nil
     var vocabs: [Vocabulary]
     var saveAsSystem: Bool = false
     var onRefresh: () -> Void
     
     @State private var selectedVocabForEdit: Vocabulary? = nil
     @State private var showingAddVocab = false
+    @State private var isSubmittingTopic = false
+    @State private var isDeletingTopic = false
+    @State private var topicReviewMessage = ""
+    @State private var showingTopicReviewAlert = false
+    @State private var showingDeleteTopicConfirm = false
+    @State private var shouldDismissAfterTopicAlert = false
     
     var groupedByWord: [String: [Vocabulary]] {
         Dictionary(grouping: vocabs, by: { $0.vocab?.trimmingCharacters(in: .whitespaces) ?? "Unknown" })
@@ -19,6 +29,13 @@ struct TopicDetailView: View {
     
     var body: some View {
         List {
+            if let topicInfo, topicInfo.visibility == "private" {
+                Section {
+                    privateTopicReviewCard(topicInfo)
+                }
+                .listRowBackground(Color.clear)
+            }
+
             if vocabs.isEmpty {
                 Text("Không có từ vựng nào trong chủ đề này.")
                     .foregroundColor(.secondary)
@@ -28,12 +45,16 @@ struct TopicDetailView: View {
                     let meanings = groupedByWord[word] ?? []
                     let firstMeaning = meanings.first
                     
-                    NavigationLink(destination: WordDetailView(word: word, meanings: meanings, saveAsSystem: saveAsSystem, onRefresh: onRefresh)) {
+                    NavigationLink(destination: WordDetailView(word: word, meanings: meanings, saveAsSystem: saveAsSystem, isPrivateTopic: isPrivateTopic, onRefresh: onRefresh)) {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack {
                                 Text(word)
                                     .font(.headline)
                                     .foregroundColor(.primary)
+
+                                if meanings.contains(where: { $0.visibility == "private" }) {
+                                    learningTag("Riêng tư", foreground: .white, background: .purple)
+                                }
                                 
                                 let learningItem = meanings.first(where: { ($0.learning_level ?? 0) > 0 })
                                 let level = learningItem?.learning_level ?? 0
@@ -123,10 +144,43 @@ struct TopicDetailView: View {
             })
         }
         .sheet(isPresented: $showingAddVocab) {
-            AddVocabView(saveAsSystem: saveAsSystem, fixedTopic: topic, onComplete: {
+            AddVocabView(saveAsSystem: saveAsSystem, fixedTopic: topic, fixedTopicId: fixedTopicId, onComplete: {
                 onRefresh()
             })
         }
+        .alert("Thông báo", isPresented: $showingTopicReviewAlert) {
+            Button("OK") {
+                onRefresh()
+                if shouldDismissAfterTopicAlert {
+                    shouldDismissAfterTopicAlert = false
+                    dismiss()
+                }
+            }
+        } message: {
+            Text(topicReviewMessage)
+        }
+        .confirmationDialog("Xoá topic riêng?", isPresented: $showingDeleteTopicConfirm, titleVisibility: .visible) {
+            if let topicInfo {
+                Button("Xoá topic", role: .destructive) {
+                    Task { await deletePrivateTopic(topicInfo) }
+                }
+            }
+            Button("Huỷ", role: .cancel) {}
+        } message: {
+            Text("Topic này chưa có từ vựng nào nên có thể xoá khỏi My Vocabulary.")
+        }
+    }
+
+    private var fixedTopicId: String? {
+        topicInfo?.id ?? vocabs.first?.topic_id
+    }
+
+    private var isPrivateTopic: Bool {
+        topicInfo?.visibility == "private"
+    }
+
+    private var canDeletePrivateTopic: Bool {
+        topicInfo?.visibility == "private" && vocabs.isEmpty && topicSubmission?.status != "pending"
     }
     
     func deleteVocab(_ item: Vocabulary) async {
@@ -141,6 +195,138 @@ struct TopicDetailView: View {
     private func canEdit(_ item: Vocabulary?) -> Bool {
         guard let item else { return false }
         return AuthManager.shared.isAdmin || item.visibility == "private"
+    }
+
+    @ViewBuilder
+    private func privateTopicReviewCard(_ topicInfo: UserTopic) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Topic riêng", systemImage: "lock.fill")
+                    .font(.headline)
+                    .foregroundColor(.purple)
+                Spacer()
+                if let status = topicSubmission?.status {
+                    privateTopicStatusBadge(status)
+                }
+            }
+
+            Text("Bạn có thể học topic này ngay. Khi thấy bộ từ đủ hay, hãy gửi admin duyệt để chia sẻ lên hệ thống chung.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            if topicSubmission?.status == "pending" {
+                Label("Đang chờ admin duyệt", systemImage: "clock.fill")
+                    .font(.subheadline.bold())
+                    .foregroundColor(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .background(Color.orange.opacity(0.12))
+                    .cornerRadius(10)
+            } else if canSubmitTopic {
+                Button {
+                    Task { await submitTopicForReview(topicInfo) }
+                } label: {
+                    HStack {
+                        if isSubmittingTopic {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "paperplane.fill")
+                        }
+                        Text(topicSubmission?.status == "rejected" ? "Gửi duyệt lại" : "Gửi chia sẻ lên hệ thống")
+                            .fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .foregroundColor(.white)
+                    .background(canSubmitTopic ? Color.blue : Color.gray)
+                    .cornerRadius(10)
+                }
+                .disabled(!canSubmitTopic || isSubmittingTopic)
+            } else {
+                Text("Hãy thêm ít nhất một từ trước khi gửi duyệt.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            if canDeletePrivateTopic {
+                Button(role: .destructive) {
+                    showingDeleteTopicConfirm = true
+                } label: {
+                    HStack {
+                        if isDeletingTopic {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "trash")
+                        }
+                        Text("Xoá topic riêng")
+                            .fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .foregroundColor(.red)
+                    .background(Color.red.opacity(0.1))
+                    .cornerRadius(10)
+                }
+                .disabled(isDeletingTopic)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func privateTopicStatusBadge(_ status: String) -> some View {
+        if status == "pending" {
+            Text("Chờ duyệt")
+                .font(.caption.bold())
+                .foregroundColor(.orange)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.orange.opacity(0.12))
+                .cornerRadius(6)
+        } else if status == "rejected" {
+            Text("Không duyệt")
+                .font(.caption.bold())
+                .foregroundColor(.red)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.red.opacity(0.12))
+                .cornerRadius(6)
+        }
+    }
+
+    private var canSubmitTopic: Bool {
+        !vocabs.isEmpty
+    }
+
+    private func submitTopicForReview(_ topicInfo: UserTopic) async {
+        isSubmittingTopic = true
+        defer { isSubmittingTopic = false }
+        shouldDismissAfterTopicAlert = false
+
+        do {
+            try await ContributionRepository.submitPrivateTopicForReview(topic: topicInfo, vocabs: vocabs)
+            topicReviewMessage = "Đã gửi topic cho admin duyệt."
+            showingTopicReviewAlert = true
+        } catch {
+            topicReviewMessage = "Gửi duyệt thất bại: \(error.localizedDescription)"
+            showingTopicReviewAlert = true
+        }
+    }
+
+    private func deletePrivateTopic(_ topicInfo: UserTopic) async {
+        isDeletingTopic = true
+        defer { isDeletingTopic = false }
+
+        do {
+            try await VocabularyRepository.deletePrivateTopic(topicInfo)
+            shouldDismissAfterTopicAlert = true
+            topicReviewMessage = "Đã xoá topic riêng."
+            showingTopicReviewAlert = true
+        } catch {
+            shouldDismissAfterTopicAlert = false
+            topicReviewMessage = "Xoá topic thất bại: \(error.localizedDescription)"
+            showingTopicReviewAlert = true
+        }
     }
 
     private func learningTag(_ text: String, foreground: Color, background: Color) -> some View {
@@ -166,6 +352,7 @@ struct WordDetailView: View {
     let word: String
     var meanings: [Vocabulary]
     var saveAsSystem: Bool = false
+    var isPrivateTopic: Bool = false
     var onRefresh: () -> Void
     
     @State private var selectedVocab: Vocabulary? = nil
@@ -180,6 +367,9 @@ struct WordDetailView: View {
             ForEach(Array(meanings.enumerated()), id: \.element.id) { index, item in
                 Section(header: HStack {
                     Text("Nghĩa \(index + 1)")
+                    if item.visibility == "private" {
+                        privateTag()
+                    }
                 }) {
                     VStack(alignment: .leading, spacing: 10) {
                         if let form = item.word_form, !form.isEmpty {
@@ -360,22 +550,22 @@ struct WordDetailView: View {
                             Label("Từ này chưa được duyệt", systemImage: "xmark.circle.fill")
                                 .foregroundColor(.red)
 
-                            HStack {
-                                Button {
-                                    Task { await submitPrivateMeanings() }
-                                } label: {
-                                    Label("Gửi duyệt lại", systemImage: "paperplane.fill")
+                            Button {
+                                Task { await submitPrivateMeanings() }
+                            } label: {
+                                HStack {
+                                    if isSubmittingContribution {
+                                        ProgressView()
+                                    } else {
+                                        Image(systemName: "paperplane.fill")
+                                    }
+                                    Text(isSubmittingContribution ? "Đang gửi duyệt..." : "Gửi duyệt lại")
+                                        .fontWeight(.semibold)
                                 }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(isSubmittingContribution)
-
-                                Button(role: .destructive) {
-                                    Task { await deletePrivateMeanings() }
-                                } label: {
-                                    Label("Xóa", systemImage: "trash")
-                                }
-                                .buttonStyle(.bordered)
+                                .frame(maxWidth: .infinity)
                             }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(isSubmittingContribution)
                         }
                     } else {
                         Button {
@@ -573,7 +763,17 @@ struct WordDetailView: View {
     }
 
     private var canSubmitToSystem: Bool {
-        !AuthManager.shared.isAdmin && meanings.contains { $0.visibility == "private" }
+        !AuthManager.shared.isAdmin && !isPrivateTopic && meanings.contains { $0.visibility == "private" }
+    }
+
+    private func privateTag() -> some View {
+        Text("Riêng tư")
+            .font(.system(size: 10, weight: .bold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.purple)
+            .cornerRadius(4)
     }
 
     private var hasPendingSubmission: Bool {
@@ -612,22 +812,6 @@ struct WordDetailView: View {
             showingContributionAlert = true
         } catch {
             contributionMessage = "Gửi duyệt thất bại: \(error.localizedDescription)"
-            showingContributionAlert = true
-        }
-    }
-
-    private func deletePrivateMeanings() async {
-        let privateMeanings = meanings.filter { $0.visibility == "private" }
-        do {
-            for item in privateMeanings {
-                guard let id = item.id else { continue }
-                try await VocabularyRepository.delete(id: id)
-            }
-            DispatchQueue.main.async {
-                onRefresh()
-            }
-        } catch {
-            contributionMessage = "Xóa thất bại: \(error.localizedDescription)"
             showingContributionAlert = true
         }
     }

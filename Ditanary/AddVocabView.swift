@@ -6,6 +6,7 @@ struct AddVocabView: View {
     var existing: Vocabulary?
     var saveAsSystem: Bool
     var fixedTopic: String?
+    var fixedTopicId: String?
     var onComplete: () -> Void
     
     @State private var vocab = ""
@@ -28,10 +29,11 @@ struct AddVocabView: View {
     @State private var successMessage = ""
     @State private var showingSuccessAlert = false
     
-    init(existing: Vocabulary? = nil, saveAsSystem: Bool = false, fixedTopic: String? = nil, onComplete: @escaping () -> Void) {
+    init(existing: Vocabulary? = nil, saveAsSystem: Bool = false, fixedTopic: String? = nil, fixedTopicId: String? = nil, onComplete: @escaping () -> Void) {
         self.existing = existing
         self.saveAsSystem = saveAsSystem
         self.fixedTopic = fixedTopic
+        self.fixedTopicId = fixedTopicId
         self.onComplete = onComplete
         
         if let v = existing {
@@ -134,7 +136,7 @@ struct AddVocabView: View {
             catalog_id: existing?.catalog_id,
             user_vocabulary_id: existing?.user_vocabulary_id,
             created_at: existing?.created_at, // Giữ nguyên ngày tạo nếu đang edit
-            topic_id: existing?.topic_id,
+            topic_id: existing?.topic_id ?? fixedTopicId,
             topics: topics.isEmpty ? nil : topics,
             visibility: existing?.visibility,
             vocab: vocab.isEmpty ? nil : vocab,
@@ -159,7 +161,7 @@ struct AddVocabView: View {
                 try await VocabularyRepository.update(newVocab)
             } else {
                 // Insert
-                try await VocabularyRepository.insert(newVocab, asSystem: saveAsSystem)
+                try await VocabularyRepository.insert(newVocab, asSystem: saveAsSystem, preferredTopicId: fixedTopicId)
             }
             
             DispatchQueue.main.async {
