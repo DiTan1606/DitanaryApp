@@ -5,6 +5,7 @@ enum QuestionType: Equatable {
     case meaningAndType
     case multipleChoice
     case sentenceScramble
+    case pronunciationExample
 }
 
 struct LearningTask: Identifiable {
@@ -16,6 +17,8 @@ struct LearningTask: Identifiable {
     var correctSentence: String? = nil
     var scrambledWords: [String] = []
     var vHint: String? = nil
+    var pronunciationMeaning: Vocabulary? = nil
+    var pronunciationExample: String? = nil
 }
 
 struct TaskResult: Identifiable {
@@ -29,10 +32,9 @@ struct TaskResult: Identifiable {
 struct LearningSessionPlan {
     let selectedGroups: [[Vocabulary]]
     let tasks: [LearningTask]
-    let masterTasks: [PronunciationTask]
     let statsByLevel: [Int: Int]
     let totalLearningWords: Int
     let totalSavedWords: Int
     let dueVocabsCount: Int
-    let masterDueVocabsCount: Int
+    let unavailablePronunciationWords: [String]
 }

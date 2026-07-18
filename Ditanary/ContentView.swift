@@ -6,7 +6,7 @@ extension Foundation.Notification.Name {
 
 private enum UserTab {
     case home
-    case myVocabulary
+    case library
     case learning
     case setting
     case profile
@@ -15,6 +15,7 @@ private enum UserTab {
 struct ContentView: View {
     @ObservedObject private var auth = AuthManager.shared
     @State private var selectedUserTab: UserTab = .home
+    @State private var vocabularyLearningRequest: UUID?
     
     var body: some View {
         if auth.isAdmin {
@@ -27,13 +28,13 @@ struct ContentView: View {
                     }
                     .tag(UserTab.home)
                 
-                MyVocabularyView()
+                LibraryView()
                     .tabItem {
-                        Label("My Vocab", systemImage: "book")
+                        Label("Library", systemImage: "books.vertical")
                     }
-                    .tag(UserTab.myVocabulary)
+                    .tag(UserTab.library)
                 
-                LearningView()
+                LearningView(openVocabularyRequest: vocabularyLearningRequest)
                     .tabItem {
                         Label("Learning", systemImage: "graduationcap")
                     }
@@ -53,6 +54,7 @@ struct ContentView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .openLearningTab)) { _ in
                 selectedUserTab = .learning
+                vocabularyLearningRequest = UUID()
             }
         }
     }

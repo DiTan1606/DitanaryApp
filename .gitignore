@@ -8,6 +8,7 @@ xcuserdata/
 # Build output
 DerivedData/
 build/
+.tmp/
 *.ipa
 *.dSYM.zip
 *.dSYM
@@ -21,6 +22,12 @@ Package.resolved.bak
 .env.*
 !.env.example
 !admin-web/.env.example
+
+# Local Supabase CLI state
+supabase/.temp/
+
+# Source PDFs and audio clips are uploaded to Supabase Storage, not bundled in Git.
+Data/listening/
 
 # Web admin
 admin-web/node_modules/
@@ -38,3 +45,6 @@ admin-web/vite.config.d.ts
 .idea/
 .vscode/
 *.swp
+
+# Python bytecode from local lesson-processing tools
+tools/__pycache__/

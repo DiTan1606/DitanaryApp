@@ -49,98 +49,96 @@ struct MyVocabularyView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if isLoading && topicItems.isEmpty {
-                    ProgressView("Đang tải dữ liệu...")
-                } else if topicItems.isEmpty {
-                    VStack {
-                        Text("Chưa có bộ từ nào.")
-                            .foregroundColor(.secondary)
-                        Text("Hãy tải bộ từ ở Trang chủ hoặc tạo topic riêng để học theo sở thích.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.top, 6)
-                    }
-                } else {
-                    List {
-                        if !topicItems.isEmpty {
-                            Section("Bộ từ của tôi") {
-                                ForEach(topicItems) { item in
-                                    NavigationLink {
-                                        TopicDetailView(
-                                            topic: item.name,
-                                            topicInfo: item.topic,
-                                            topicSubmission: item.submission,
-                                            vocabs: item.vocabs,
-                                            onRefresh: {
-                                                Task { await fetchVocabs() }
-                                            }
-                                        )
-                                    } label: {
-                                        MyVocabularyTopicRow(item: item)
-                                    }
+        Group {
+            if isLoading && topicItems.isEmpty {
+                ProgressView("Đang tải dữ liệu...")
+            } else if topicItems.isEmpty {
+                VStack {
+                    Text("Chưa có bộ từ nào.")
+                        .foregroundColor(.secondary)
+                    Text("Hãy tải bộ từ ở Trang chủ hoặc tạo topic riêng để học theo sở thích.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 6)
+                }
+            } else {
+                List {
+                    if !topicItems.isEmpty {
+                        Section("Bộ từ của tôi") {
+                            ForEach(topicItems) { item in
+                                NavigationLink {
+                                    TopicDetailView(
+                                        topic: item.name,
+                                        topicInfo: item.topic,
+                                        topicSubmission: item.submission,
+                                        vocabs: item.vocabs,
+                                        onRefresh: {
+                                            Task { await fetchVocabs() }
+                                        }
+                                    )
+                                } label: {
+                                    MyVocabularyTopicRow(item: item)
                                 }
                             }
                         }
                     }
-                    .refreshable {
-                        await fetchVocabs()
-                    }
                 }
             }
-            .navigationTitle("My Vocabulary")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showingCreateTopic = true
-                    } label: {
-                        Image(systemName: "folder.badge.plus")
-                    }
+        }
+        .refreshable {
+            await fetchVocabs()
+        }
+        .navigationTitle("My Vocabulary")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showingCreateTopic = true
+                } label: {
+                    Image(systemName: "folder.badge.plus")
                 }
             }
-            .task {
-                await fetchVocabs()
-            }
-            .alert("Thông báo", isPresented: $showingAlert) {
-                Button("OK") {}
-            } message: {
-                Text(alertMessage)
-            }
-            .sheet(isPresented: $showingCreateTopic) {
-                PrivateTopicCreateView(onComplete: {
-                    Task { await fetchVocabs() }
-                })
-            }
+        }
+        .task {
+            await fetchVocabs()
+        }
+        .alert("Thông báo", isPresented: $showingAlert) {
+            Button("OK") {}
+        } message: {
+            Text(alertMessage)
+        }
+        .sheet(isPresented: $showingCreateTopic) {
+            PrivateTopicCreateView(onComplete: {
+                Task { await fetchVocabs() }
+            })
         }
     }
     
-    func fetchVocabs() async {
+    @MainActor
+    private func fetchVocabs() async {
         guard let userId = AuthManager.shared.currentUser?.id.uuidString else {
-            self.isLoading = false
+            vocabs = []
+            privateTopics = []
+            topicSubmissions = []
+            isLoading = false
             return
         }
         
         isLoading = true
+        defer { isLoading = false }
         
         do {
             async let fetchedVocabs = VocabularyRepository.fetchUserVocabs(userId: userId, ordered: true)
             async let fetchedPrivateTopics = VocabularyRepository.fetchUserPrivateTopics(userId: userId)
             async let fetchedSubmissions = ContributionRepository.fetchUserTopicSubmissions()
             let result = try await (fetchedVocabs, fetchedPrivateTopics, fetchedSubmissions)
-            
-            DispatchQueue.main.async {
-                self.vocabs = result.0
-                self.privateTopics = result.1
-                self.topicSubmissions = result.2
-                self.isLoading = false
-            }
+
+            vocabs = result.0
+            privateTopics = result.1
+            topicSubmissions = result.2
         } catch {
-            print("Lỗi lấy dữ liệu: \(error)")
-            DispatchQueue.main.async {
-                self.isLoading = false
-            }
+            alertMessage = "Không tải được My Vocabulary: \(error.localizedDescription)"
+            showingAlert = true
         }
     }
 }

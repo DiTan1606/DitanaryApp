@@ -3,6 +3,7 @@ import SwiftUI
 struct NotificationView: View {
     @State private var notifications: [Notification] = []
     @State private var isLoading = false
+    @State private var errorMessage: String?
     
     var body: some View {
         Group {
@@ -63,12 +64,22 @@ struct NotificationView: View {
         .onAppear {
             Task { await fetchNotifications() }
         }
+        .alert("Thông báo", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "")
+        }
     }
     
-    func fetchNotifications() async {
+    @MainActor
+    private func fetchNotifications() async {
         guard let userId = AuthManager.shared.currentUser?.id.uuidString else { return }
         
         isLoading = true
+        defer { isLoading = false }
         do {
             let fetched = try await NotificationRepository.fetchUserNotifications(userId: userId)
             
@@ -86,40 +97,47 @@ struct NotificationView: View {
                 return date <= now
             }
             
-            DispatchQueue.main.async {
-                self.notifications = filtered
-                self.isLoading = false
-            }
+            notifications = filtered
         } catch {
-            print("Lỗi tải thông báo: \(error)")
-            isLoading = false
+            errorMessage = "Không tải được thông báo: \(error.localizedDescription)"
         }
     }
     
-    func markAsRead(_ notification: Notification) {
+    private func markAsRead(_ notification: Notification) {
         Task {
             do {
                 try await NotificationRepository.markAsRead(id: notification.id)
                 
                 await fetchNotifications()
             } catch {
-                print("Lỗi đánh dấu đã đọc: \(error)")
+                errorMessage = "Không thể đánh dấu thông báo đã đọc: \(error.localizedDescription)"
             }
         }
     }
     
-    func deleteNotification(at offsets: IndexSet) {
-        for index in offsets {
-            let id = notifications[index].id
-            Task {
-                do {
-                    try await NotificationRepository.delete(id: id)
-                } catch {
-                    print("Lỗi xóa thông báo: \(error)")
-                }
+    private func deleteNotification(at offsets: IndexSet) {
+        let ids = offsets.map { notifications[$0].id }
+        Task { await deleteNotifications(ids: ids) }
+    }
+
+    @MainActor
+    private func deleteNotifications(ids: [String]) async {
+        var firstError: Error?
+
+        for id in ids {
+            do {
+                try await NotificationRepository.delete(id: id)
+                notifications.removeAll { $0.id == id }
+            } catch {
+                firstError = error
+                break
             }
         }
-        notifications.remove(atOffsets: offsets)
+
+        if let firstError {
+            errorMessage = "Không thể xoá thông báo: \(firstError.localizedDescription)"
+            await fetchNotifications()
+        }
     }
     
     func formatDate(_ dateStr: String) -> String {

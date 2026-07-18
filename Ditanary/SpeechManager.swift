@@ -34,4 +34,52 @@ class SpeechManager: ObservableObject {
         
         synthesizer.speak(utterance)
     }
+
+    func speak(example sentence: String, targetWord: String, ipa: String?, stopPrevious: Bool = true) {
+        if stopPrevious {
+            synthesizer.stopSpeaking(at: .immediate)
+        }
+
+        let attributedSentence = NSMutableAttributedString(string: sentence)
+        if let ipa = ipa, !ipa.isEmpty,
+           let targetRange = firstWholeWordRange(of: targetWord, in: sentence) {
+            let cleanIPA = ipa.replacingOccurrences(of: "/", with: "").trimmingCharacters(in: .whitespaces)
+            attributedSentence.addAttribute(
+                .accessibilitySpeechIPANotation,
+                value: cleanIPA,
+                range: NSRange(targetRange, in: sentence)
+            )
+        }
+
+        let utterance = AVSpeechUtterance(attributedString: attributedSentence)
+        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        utterance.rate = 0.45
+        synthesizer.speak(utterance)
+    }
+
+    private func firstWholeWordRange(of target: String, in sentence: String) -> Range<String.Index>? {
+        let trimmedTarget = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTarget.isEmpty else { return nil }
+
+        var searchStart = sentence.startIndex
+        while searchStart < sentence.endIndex,
+              let range = sentence.range(
+                of: trimmedTarget,
+                options: [.caseInsensitive, .diacriticInsensitive],
+                range: searchStart..<sentence.endIndex
+              ) {
+            let beforeIsLetter = range.lowerBound > sentence.startIndex
+                && sentence[sentence.index(before: range.lowerBound)].isLetter
+            let afterIsLetter = range.upperBound < sentence.endIndex
+                && sentence[range.upperBound].isLetter
+
+            if !beforeIsLetter && !afterIsLetter {
+                return range
+            }
+
+            searchStart = range.upperBound
+        }
+
+        return nil
+    }
 }

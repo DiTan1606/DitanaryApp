@@ -1381,6 +1381,10 @@ function UserVocabModal({
       setError('Vui lòng nhập từ vựng.');
       return;
     }
+    if (!draft.e_example.trim()) {
+      setError('Mỗi nghĩa cần một ví dụ tiếng Anh để luyện phát âm.');
+      return;
+    }
     setIsSaving(true);
     try {
       await onSave(draft);
@@ -1408,7 +1412,7 @@ function UserVocabModal({
           <label>Nghĩa Anh<textarea value={draft.e_meaning} onChange={(event) => update('e_meaning', event.target.value)} /></label>
           <label>Nghĩa Anh - Việt<textarea value={draft.ev_meaning} onChange={(event) => update('ev_meaning', event.target.value)} /></label>
           <label>Nghĩa Việt<textarea value={draft.v_meaning} onChange={(event) => update('v_meaning', event.target.value)} /></label>
-          <label>Ví dụ Anh<textarea value={draft.e_example} onChange={(event) => update('e_example', event.target.value)} /></label>
+          <label>Ví dụ Anh *<textarea value={draft.e_example} onChange={(event) => update('e_example', event.target.value)} /></label>
           <label>Ví dụ Việt<textarea value={draft.v_example} onChange={(event) => update('v_example', event.target.value)} /></label>
           <label>Word family<textarea value={draft.word_family} onChange={(event) => update('word_family', event.target.value)} /></label>
           <label>Đồng nghĩa<textarea value={draft.synonymous} onChange={(event) => update('synonymous', event.target.value)} /></label>

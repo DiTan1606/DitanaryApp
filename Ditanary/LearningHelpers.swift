@@ -22,46 +22,6 @@ enum LearningTextNormalizer {
     }
 }
 
-enum PronunciationScorer {
-    static func score(target: String, input: String, averageConfidence: Double) -> PronunciationScore {
-        let targetWords = LearningTextNormalizer.normalizedWords(target)
-        let inputWords = LearningTextNormalizer.normalizedWords(input)
-
-        guard !targetWords.isEmpty, !inputWords.isEmpty else {
-            return PronunciationScore(finalScore: 0, sequenceScore: 0, confidenceScore: 0)
-        }
-
-        let empty = [Int](repeating: 0, count: inputWords.count + 1)
-        var last = [Int](0...inputWords.count)
-
-        for (i, targetWord) in targetWords.enumerated() {
-            var current = [i + 1] + empty.dropFirst()
-            for (j, inputWord) in inputWords.enumerated() {
-                if targetWord == inputWord {
-                    current[j + 1] = last[j]
-                } else {
-                    current[j + 1] = min(last[j], current[j], last[j + 1]) + 1
-                }
-            }
-            last = current
-        }
-
-        let diffCount = last.last ?? 0
-        let maxLength = max(targetWords.count, inputWords.count)
-        let sequenceScoreRaw = Double(maxLength - diffCount) / Double(maxLength)
-        let sequenceScore = max(0, sequenceScoreRaw * 100)
-        let boundedConfidence = min(max(averageConfidence, 0), 1)
-        let confidenceScore = boundedConfidence * 100
-        let finalScore = max(0, sequenceScoreRaw * boundedConfidence * 100)
-
-        return PronunciationScore(
-            finalScore: finalScore,
-            sequenceScore: sequenceScore,
-            confidenceScore: confidenceScore
-        )
-    }
-}
-
 enum ReviewScheduler {
     static func nextLearningLevel(from currentLevel: Int) -> Int {
         currentLevel + 1
@@ -123,7 +83,7 @@ enum DitanaryReviewSchedule {
         ("Cấp 3 -> 4", "Ôn lại sau 3 ngày"),
         ("Cấp 4 -> 5", "Ôn lại sau 7 ngày"),
         ("Cấp 5 -> 6", "Ôn lại sau 15 ngày"),
-        ("Cấp 6+", "Master, mở khóa luyện phát âm và tiếp tục ôn 30, 60, 120, 240, rồi 365 ngày")
+        ("Cấp 6+", "Master, tiếp tục ôn sau 30, 60, 120, 240, rồi 365 ngày")
     ]
 }
 
@@ -168,7 +128,7 @@ enum ReviewTimeFormatter {
 }
 
 enum LearningSessionBuilder {
-    static func build(from vocabs: [Vocabulary], now: Date = Date(), maxWords: Int = 7) -> LearningSessionPlan {
+    static func build(from vocabs: [Vocabulary], now: Date = Date(), maxWords: Int = 5) -> LearningSessionPlan {
         let allGrouped = Dictionary(grouping: vocabs, by: {
             $0.vocab?.trimmingCharacters(in: .whitespaces).lowercased() ?? "unknown"
         })
@@ -179,7 +139,6 @@ enum LearningSessionBuilder {
         }))
 
         var dueGroups: [[Vocabulary]] = []
-        var masterDueGroups: [[Vocabulary]] = []
         var stats = [1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0]
         var totalLearningWords = 0
 
@@ -192,38 +151,36 @@ enum LearningSessionBuilder {
             stats[LearningLevelDisplay.bucket(for: level), default: 0] += 1
 
             let isDue = group.contains { ReviewScheduler.isDue($0, now: now) }
-            let pronunciationScores = group.compactMap(\.pronunciation_score)
-            let hasPassedPronunciation = !pronunciationScores.isEmpty
-                && pronunciationScores.reduce(0, +) / pronunciationScores.count >= 70
-                && pronunciationScores.count == group.count
-
-            if level >= 6 && !hasPassedPronunciation {
-                masterDueGroups.append(group)
-            } else if isDue {
+            if isDue {
                 dueGroups.append(group)
             }
         }
 
         let dueCount = dueGroups.count
-        let masterDueCount = masterDueGroups.count
+        let unavailablePronunciationWords = dueGroups.compactMap { group -> String? in
+            let hasExampleForEveryMeaning = group.allSatisfy {
+                !($0.E_example?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            }
+            return hasExampleForEveryMeaning ? nil : group.first?.vocab
+        }
+        var practiceReadyGroups = dueGroups.filter { group in
+            group.allSatisfy {
+                !($0.E_example?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            }
+        }
 
-        dueGroups.shuffle()
-        let selectedGroups = Array(dueGroups.prefix(maxWords))
+        practiceReadyGroups.shuffle()
+        let selectedGroups = Array(practiceReadyGroups.prefix(maxWords))
         let tasks = buildLearningTasks(from: selectedGroups, allJoinedMeanings: allJoinedMeanings).shuffled()
-
-        masterDueGroups.shuffle()
-        let selectedMasterGroups = Array(masterDueGroups.prefix(maxWords))
-        let masterTasks = buildMasterTasks(from: selectedMasterGroups)
 
         return LearningSessionPlan(
             selectedGroups: selectedGroups,
             tasks: tasks,
-            masterTasks: masterTasks,
             statsByLevel: stats,
             totalLearningWords: totalLearningWords,
             totalSavedWords: allGrouped.count,
             dueVocabsCount: dueCount,
-            masterDueVocabsCount: masterDueCount
+            unavailablePronunciationWords: unavailablePronunciationWords.sorted()
         )
     }
 
@@ -263,23 +220,14 @@ enum LearningSessionBuilder {
                             vHint: meaning.V_example
                         ))
                     }
-                }
-            }
-        }
 
-        return tasks
-    }
-
-    private static func buildMasterTasks(from groups: [[Vocabulary]]) -> [PronunciationTask] {
-        var tasks: [PronunciationTask] = []
-
-        for group in groups {
-            guard let word = group.first?.vocab else { continue }
-            for meaning in group {
-                if let example = meaning.E_example, !example.isEmpty {
-                    tasks.append(PronunciationTask(word: word, targetText: example, meaning: meaning))
-                } else {
-                    tasks.append(PronunciationTask(word: word, targetText: word, meaning: meaning))
+                    tasks.append(LearningTask(
+                        word: word,
+                        meanings: group,
+                        type: .pronunciationExample,
+                        pronunciationMeaning: meaning,
+                        pronunciationExample: example
+                    ))
                 }
             }
         }

@@ -75,7 +75,7 @@ struct AddVocabView: View {
                 }
                 
                 Section(header: Text("Ví dụ")) {
-                    TextField("Ví dụ tiếng Anh", text: $eExample)
+                    TextField("Ví dụ tiếng Anh *", text: $eExample)
                     TextField("Ví dụ tiếng Việt", text: $vExample)
                 }
                 
@@ -100,7 +100,7 @@ struct AddVocabView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Lưu") { Task { await saveVocab() } }
-                        .disabled(vocab.isEmpty || isSaving)
+                        .disabled(vocab.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || eExample.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
                 }
             }
             .overlay {
@@ -125,6 +125,16 @@ struct AddVocabView: View {
     func saveVocab() async {
         guard let userId = AuthManager.shared.currentUser?.id.uuidString else {
             errorMessage = "Chưa đăng nhập!"
+            return
+        }
+
+        guard !vocab.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            errorMessage = "Vui lòng nhập từ vựng."
+            return
+        }
+
+        guard !eExample.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            errorMessage = "Mỗi nghĩa cần một ví dụ tiếng Anh để luyện phát âm."
             return
         }
         

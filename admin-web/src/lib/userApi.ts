@@ -37,6 +37,12 @@ function clean(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
+function requireEnglishExample(input: Pick<VocabInput, 'e_example'>) {
+  if (!clean(input.e_example)) {
+    throw new Error('Mỗi nghĩa cần một ví dụ tiếng Anh để luyện phát âm.');
+  }
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -96,6 +102,7 @@ export function catalogToInput(vocab: VocabCatalog): VocabInput {
 }
 
 function toPrivateCatalogInsert(input: VocabInput, userId: string) {
+  requireEnglishExample(input);
   return {
     id: input.id ?? crypto.randomUUID(),
     topic_id: input.topic_id,
@@ -118,6 +125,7 @@ function toPrivateCatalogInsert(input: VocabInput, userId: string) {
 }
 
 function toCatalogUpdate(input: VocabInput) {
+  requireEnglishExample(input);
   return {
     topic_id: input.topic_id,
     word: clean(input.word) ?? 'Untitled',
@@ -353,8 +361,11 @@ export async function createPrivateVocab(input: VocabInput, userId: string) {
 }
 
 export async function importPrivateVocabs(rows: VocabInput[], userId: string) {
-  for (const row of rows) {
-    if (row.word.trim()) await createPrivateVocab(row, userId);
+  const rowsToImport = rows.filter((row) => row.word.trim());
+  rowsToImport.forEach(requireEnglishExample);
+
+  for (const row of rowsToImport) {
+    await createPrivateVocab(row, userId);
   }
 }
 
@@ -381,6 +392,9 @@ export async function deleteUserVocab(row: UserVocabulary) {
 export async function submitVocabContribution(row: UserVocabulary) {
   const catalogId = row.vocab_id ?? row.vocab_catalog?.id;
   if (!catalogId || !row.user_id) throw new Error('Thiếu dữ liệu từ riêng.');
+  if (!clean(row.vocab_catalog?.e_example)) {
+    throw new Error('Thêm ví dụ tiếng Anh trước khi gửi từ này để duyệt.');
+  }
 
   const { error } = await supabase.from('vocab_submissions').insert({
     id: crypto.randomUUID(),
@@ -432,6 +446,9 @@ export async function fetchUserTopicSubmissions(userId: string) {
 export async function submitPrivateTopicForReview(topic: Topic, vocabs: UserVocabulary[], userId: string) {
   const validVocabs = vocabs.filter((row) => row.vocab_catalog?.word?.trim() && (row.vocab_id ?? row.vocab_catalog?.id));
   if (validVocabs.length === 0) throw new Error('Topic cần có ít nhất một từ để gửi duyệt.');
+  if (validVocabs.some((row) => !clean(row.vocab_catalog?.e_example))) {
+    throw new Error('Mỗi từ trong topic cần một ví dụ tiếng Anh trước khi gửi duyệt.');
+  }
 
   const submissionId = crypto.randomUUID();
   const { error: submissionError } = await supabase.from('topic_submissions').insert({

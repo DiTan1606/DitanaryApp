@@ -4,8 +4,9 @@ struct HomeView: View {
     let adminUserId = AppConfig.adminUserId 
     
     @State private var storeVocabs: [Vocabulary] = []
-    @State private var myVocabs: [Vocabulary] = [] // Store full objects for progress
     @State private var myDownloadKeysByTopic: [String: Set<String>] = [:]
+    @State private var storeListeningSeries: [ListeningSeriesCatalogItem] = []
+    @State private var listeningLibraryLessonIds: Set<String> = []
     
     @State private var isLoading = false
     @State private var isDownloading = false
@@ -108,6 +109,62 @@ struct HomeView: View {
                             LazyVStack(spacing: 15) {
                                 ForEach(sortedTopics, id: \.self) { topic in
                                     topicRow(topic: topic)
+                                }
+                            }
+                        }
+                    }
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 24)
+                            .fill(Color(UIColor.secondarySystemGroupedBackground))
+                            .shadow(color: Color.black.opacity(0.05), radius: 15, x: 0, y: 5)
+                    )
+                    .padding(.horizontal)
+
+                    // Explore Listening Section
+                    VStack(alignment: .leading, spacing: 20) {
+                        HStack {
+                            Text("Khám Phá Bài Luyện Nghe")
+                                .font(.title2)
+                                .bold()
+                            Spacer()
+                            Image(systemName: "headphones")
+                                .foregroundColor(.secondary)
+                        }
+
+                        if isLoading {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                        } else if storeListeningSeries.isEmpty {
+                            VStack(spacing: 8) {
+                                Image(systemName: "waveform.slash")
+                                    .font(.system(size: 40))
+                                    .foregroundColor(.gray)
+                                Text("Hiện chưa có seri bài luyện nghe hệ thống nào.")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                        } else {
+                            LazyVStack(spacing: 14) {
+                                ForEach(storeListeningSeries) { catalogItem in
+                                    NavigationLink {
+                                        ListeningSeriesPreviewView(
+                                            catalogItem: catalogItem,
+                                            downloadedLessonIds: listeningLibraryLessonIds,
+                                            onLibraryChanged: {
+                                                Task { await fetchListeningLibrary() }
+                                            }
+                                        )
+                                    } label: {
+                                        ListeningSystemSeriesRow(
+                                            catalogItem: catalogItem,
+                                            downloadedLessonIds: listeningLibraryLessonIds
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
                                 }
                             }
                         }
@@ -306,10 +363,12 @@ struct HomeView: View {
         isLoading = true
         async let fetchStore: () = fetchStoreVocabs()
         async let fetchMy: () = fetchMyTopics()
+        async let fetchListeningLessonsData: () = fetchStoreListeningSeries()
+        async let fetchListeningLibraryData: () = fetchListeningLibrary()
         async let fetchStats: () = fetchUserStats()
         async let fetchNotif: () = fetchNotifications()
         
-        _ = await (fetchStore, fetchMy, fetchStats, fetchNotif)
+        _ = await (fetchStore, fetchMy, fetchListeningLessonsData, fetchListeningLibraryData, fetchStats, fetchNotif)
         isLoading = false
     }
     
@@ -337,11 +396,34 @@ struct HomeView: View {
                 }
             }
             DispatchQueue.main.async {
-                self.myVocabs = fetched
                 self.myDownloadKeysByTopic = dict
             }
         } catch {
             print("Lỗi lấy my topics: \(error)")
+        }
+    }
+
+    func fetchStoreListeningSeries() async {
+        do {
+            let fetched = try await ListeningRepository.fetchSeriesCatalog()
+            DispatchQueue.main.async {
+                self.storeListeningSeries = fetched
+            }
+        } catch {
+            print("Lỗi lấy seri bài luyện nghe hệ thống: \(error)")
+        }
+    }
+
+    func fetchListeningLibrary() async {
+        guard let userId = AuthManager.shared.currentUser?.id.uuidString else { return }
+
+        do {
+            let entries = try await ListeningRepository.fetchUserLessonEntries(userId: userId)
+            DispatchQueue.main.async {
+                self.listeningLibraryLessonIds = Set(entries.map(\.lesson_id))
+            }
+        } catch {
+            print("Lỗi lấy thư viện bài nghe: \(error)")
         }
     }
     

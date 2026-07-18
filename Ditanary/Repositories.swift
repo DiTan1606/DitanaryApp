@@ -99,7 +99,6 @@ enum VocabularyRepository {
     }
 
     private struct UserVocabularyDeleteLookup: Decodable {
-        let id: String
         let vocab_id: String?
         let vocab_catalog: VocabCatalogRow?
     }
@@ -171,6 +170,7 @@ enum VocabularyRepository {
 
     static func insert(_ vocab: Vocabulary, asSystem: Bool = false, preferredTopicId: String? = nil) async throws {
         guard let userId = await AuthManager.shared.currentUser?.id.uuidString else { return }
+        try requireEnglishExample(for: vocab)
         let catalogId = vocab.catalog_id ?? vocab.id ?? UUID().uuidString
         let resolvedTopicId: String?
         if let preferredTopicId {
@@ -203,6 +203,7 @@ enum VocabularyRepository {
 
     static func update(_ vocab: Vocabulary) async throws {
         guard let catalogId = vocab.catalog_id ?? (vocab.user_vocabulary_id == nil ? vocab.id : nil) else { return }
+        try requireEnglishExample(for: vocab)
         let isAdmin = await AuthManager.shared.isAdmin
         let resolvedTopicId: String?
         if !isAdmin, let existingTopicId = vocab.topic_id {
@@ -221,27 +222,36 @@ enum VocabularyRepository {
     static func delete(id: String) async throws {
         let userRows: [UserVocabularyDeleteLookup] = try await supabase
             .from("user_vocabulary")
-            .select("id,vocab_id,vocab_catalog(id,visibility)")
+            .select("vocab_id,vocab_catalog(id,visibility)")
             .eq("id", value: id)
             .limit(1)
             .execute()
             .value
 
-        try await supabase
-            .from("user_vocabulary")
-            .delete()
-            .eq("id", value: id)
-            .execute()
-
-        if let userRow = userRows.first,
-           userRow.vocab_catalog?.visibility == "private",
-           let catalogId = userRow.vocab_id {
+        if let userRow = userRows.first {
             try await supabase
-                .from("vocab_catalog")
+                .from("user_vocabulary")
                 .delete()
-                .eq("id", value: catalogId)
+                .eq("id", value: id)
                 .execute()
+
+            if userRow.vocab_catalog?.visibility == "private",
+               let catalogId = userRow.vocab_id {
+                try await supabase
+                    .from("vocab_catalog")
+                    .delete()
+                    .eq("id", value: catalogId)
+                    .execute()
+            }
             return
+        }
+
+        guard await AuthManager.shared.isAdmin else {
+            throw NSError(
+                domain: "Ditanary",
+                code: 404,
+                userInfo: [NSLocalizedDescriptionKey: "Không tìm thấy từ trong thư viện của bạn."]
+            )
         }
 
         try await supabase
@@ -498,6 +508,16 @@ enum VocabularyRepository {
         return trimmed?.isEmpty == false ? trimmed : nil
     }
 
+    private static func requireEnglishExample(for vocab: Vocabulary) throws {
+        guard nilIfEmpty(vocab.E_example) != nil else {
+            throw NSError(
+                domain: "Ditanary",
+                code: 400,
+                userInfo: [NSLocalizedDescriptionKey: "Mỗi nghĩa cần một ví dụ tiếng Anh để luyện phát âm."]
+            )
+        }
+    }
+
     private static func normalizedRequiredWord(_ value: String?) -> String {
         nilIfEmpty(value) ?? "Untitled"
     }
@@ -580,6 +600,13 @@ enum ContributionRepository {
     static func submitVocabulary(_ vocab: Vocabulary) async throws {
         guard let userId = await AuthManager.shared.currentUser?.id.uuidString,
               let catalogId = vocab.catalog_id ?? vocab.id else { return }
+        guard nilIfEmpty(vocab.E_example) != nil else {
+            throw NSError(
+                domain: "Ditanary",
+                code: 400,
+                userInfo: [NSLocalizedDescriptionKey: "Thêm ví dụ tiếng Anh trước khi gửi từ này để duyệt."]
+            )
+        }
 
         let submission = VocabSubmissionInsert(
             id: UUID().uuidString,
@@ -623,6 +650,13 @@ enum ContributionRepository {
         }
         guard !validVocabs.isEmpty else {
             throw NSError(domain: "Ditanary", code: 400, userInfo: [NSLocalizedDescriptionKey: "Topic cần có ít nhất một từ để gửi duyệt."])
+        }
+        guard validVocabs.allSatisfy({ nilIfEmpty($0.E_example) != nil }) else {
+            throw NSError(
+                domain: "Ditanary",
+                code: 400,
+                userInfo: [NSLocalizedDescriptionKey: "Mỗi từ trong topic cần một ví dụ tiếng Anh trước khi gửi duyệt."]
+            )
         }
 
         let submissionId = UUID().uuidString

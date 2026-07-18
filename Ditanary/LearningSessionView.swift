@@ -196,6 +196,9 @@ struct LearningSessionView: View {
                             .background(RoundedRectangle(cornerRadius: 15).fill(Color.orange.opacity(0.1)))
                     }
                 }
+
+            case .pronunciationExample:
+                EmptyView()
             }
         }
         .padding(.horizontal)
@@ -204,7 +207,12 @@ struct LearningSessionView: View {
     @ViewBuilder
     func inputArea(for task: LearningTask) -> some View {
         VStack {
-            if task.type == .multipleChoice {
+            if task.type == .pronunciationExample {
+                PronunciationExampleExerciseView(task: task) {
+                    nextTask()
+                }
+                .id(task.id)
+            } else if task.type == .multipleChoice {
                 ForEach(task.options, id: \.self) { option in
                     Button(action: {
                         checkAnswer(for: task, selected: option)
@@ -420,7 +428,11 @@ struct LearningSessionView: View {
                                 }
                                 if let eExample = meaning.E_example, !eExample.isEmpty {
                                     DetailRow(title: "Ví dụ Tiếng Anh", content: eExample, isItalic: true, onSpeak: {
-                                        SpeechManager.shared.speak(word: eExample, ipa: nil)
+                                        SpeechManager.shared.speak(
+                                            example: eExample,
+                                            targetWord: task.word,
+                                            ipa: meaning.IPA
+                                        )
                                     })
                                 }
                                 if let vExample = meaning.V_example, !vExample.isEmpty {
@@ -474,6 +486,8 @@ struct LearningSessionView: View {
     }
     
     func checkAnswer(for task: LearningTask, selected: String? = nil) {
+        guard task.type != .pronunciationExample else { return }
+
         let actualWord = task.word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         var isCorrect = false
         var answer = ""

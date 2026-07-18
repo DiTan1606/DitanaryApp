@@ -33,11 +33,18 @@ function clean(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
+function requireEnglishExample(input: Pick<VocabInput, 'e_example'>) {
+  if (!clean(input.e_example)) {
+    throw new Error('Mỗi nghĩa cần một ví dụ tiếng Anh để luyện phát âm.');
+  }
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
 
 function toCatalogInsert(input: VocabInput, userId: string, visibility = 'system') {
+  requireEnglishExample(input);
   return {
     id: input.id ?? crypto.randomUUID(),
     topic_id: input.topic_id,
@@ -60,6 +67,7 @@ function toCatalogInsert(input: VocabInput, userId: string, visibility = 'system
 }
 
 function toCatalogUpdate(input: VocabInput) {
+  requireEnglishExample(input);
   return {
     topic_id: input.topic_id,
     word: clean(input.word) ?? 'Untitled',
@@ -314,6 +322,9 @@ export async function markVocabSubmission(
 
 export async function approveVocabSubmission(submission: VocabSubmission, adminId: string) {
   if (!submission.catalog_id) throw new Error('Submission thiếu catalog_id.');
+  if (!clean(submission.vocab_catalog?.e_example)) {
+    throw new Error('Không thể duyệt từ vì từ này chưa có ví dụ tiếng Anh.');
+  }
 
   const { error: catalogError } = await supabase
     .from('vocab_catalog')
@@ -403,8 +414,12 @@ export async function approveTopicSubmission(
   adminId: string
 ) {
   if (submission.topic_id) {
-    const approvedCatalogIds = (submission.topic_submission_words ?? [])
-      .filter((word) => approvedWordIds.has(word.id))
+    const approvedWords = (submission.topic_submission_words ?? [])
+      .filter((word) => approvedWordIds.has(word.id));
+    if (approvedWords.some((word) => !clean(word.e_example))) {
+      throw new Error('Không thể duyệt topic vì có từ chưa có ví dụ tiếng Anh.');
+    }
+    const approvedCatalogIds = approvedWords
       .map((word) => word.catalog_id)
       .filter((id): id is string => Boolean(id));
 
@@ -435,6 +450,9 @@ export async function approveTopicSubmission(
 
   const topic = await getOrCreateTopic(submission.name);
   const approvedWords = (submission.topic_submission_words ?? []).filter((word) => approvedWordIds.has(word.id));
+  if (approvedWords.some((word) => !clean(word.e_example))) {
+    throw new Error('Không thể duyệt topic vì có từ chưa có ví dụ tiếng Anh.');
+  }
   const reusable = await fetchReusableCatalogRows(topic.id, submission.requester_id);
   const reusableByKey = new Map<string, VocabCatalog[]>();
 

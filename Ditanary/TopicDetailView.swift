@@ -18,9 +18,19 @@ struct TopicDetailView: View {
     @State private var showingTopicReviewAlert = false
     @State private var showingDeleteTopicConfirm = false
     @State private var shouldDismissAfterTopicAlert = false
+    @State private var removedVocabularyIDs: Set<String> = []
+    @State private var deletingWordKeys: Set<String> = []
+    @State private var shouldDismissAfterLastVocabularyRemoval = false
+
+    private var displayedVocabs: [Vocabulary] {
+        vocabs.filter { vocabulary in
+            guard let id = vocabulary.id else { return true }
+            return !removedVocabularyIDs.contains(id)
+        }
+    }
     
     var groupedByWord: [String: [Vocabulary]] {
-        Dictionary(grouping: vocabs, by: { $0.vocab?.trimmingCharacters(in: .whitespaces) ?? "Unknown" })
+        Dictionary(grouping: displayedVocabs, by: { $0.vocab?.trimmingCharacters(in: .whitespaces) ?? "Unknown" })
     }
     
     var uniqueWords: [String] {
@@ -36,7 +46,7 @@ struct TopicDetailView: View {
                 .listRowBackground(Color.clear)
             }
 
-            if vocabs.isEmpty {
+            if displayedVocabs.isEmpty {
                 Text("Không có từ vựng nào trong chủ đề này.")
                     .foregroundColor(.secondary)
                     .listRowBackground(Color.clear)
@@ -45,7 +55,14 @@ struct TopicDetailView: View {
                     let meanings = groupedByWord[word] ?? []
                     let firstMeaning = meanings.first
                     
-                    NavigationLink(destination: WordDetailView(word: word, meanings: meanings, saveAsSystem: saveAsSystem, isPrivateTopic: isPrivateTopic, onRefresh: onRefresh)) {
+                    NavigationLink(destination: WordDetailView(
+                        word: word,
+                        meanings: meanings,
+                        saveAsSystem: saveAsSystem,
+                        isPrivateTopic: isPrivateTopic,
+                        onRefresh: onRefresh,
+                        onVocabularyDeleted: markVocabularyRemoved
+                    )) {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack {
                                 Text(word)
@@ -104,15 +121,14 @@ struct TopicDetailView: View {
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
-                            Task {
-                                for item in meanings {
-                                    await deleteVocab(item)
-                                }
-                                DispatchQueue.main.async { onRefresh() }
-                            }
+                            Task { await deleteWord(meanings, wordKey: word) }
                         } label: {
-                            Label("Xóa từ", systemImage: "trash")
+                            Label(
+                                deletingWordKeys.contains(word) ? "Đang xóa" : "Xóa từ",
+                                systemImage: "trash"
+                            )
                         }
+                        .disabled(!deletingWordKeys.isEmpty)
                         
                         if canEdit(firstMeaning) {
                             Button {
@@ -128,6 +144,9 @@ struct TopicDetailView: View {
         }
         .navigationTitle(topic)
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            dismissAfterLastVocabularyRemovalIfNeeded()
+        }
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
@@ -172,7 +191,7 @@ struct TopicDetailView: View {
     }
 
     private var fixedTopicId: String? {
-        topicInfo?.id ?? vocabs.first?.topic_id
+        topicInfo?.id ?? displayedVocabs.first?.topic_id
     }
 
     private var isPrivateTopic: Bool {
@@ -180,16 +199,48 @@ struct TopicDetailView: View {
     }
 
     private var canDeletePrivateTopic: Bool {
-        topicInfo?.visibility == "private" && vocabs.isEmpty && topicSubmission?.status != "pending"
+        topicInfo?.visibility == "private" && displayedVocabs.isEmpty && topicSubmission?.status != "pending"
     }
-    
-    func deleteVocab(_ item: Vocabulary) async {
-        guard let id = item.id else { return }
-        do {
-            try await VocabularyRepository.delete(id: id)
-        } catch {
-            print("Xóa thất bại: \(error)")
+
+    private func deleteWord(_ meanings: [Vocabulary], wordKey: String) async {
+        let ids = meanings.compactMap(\.id)
+        guard !ids.isEmpty, deletingWordKeys.insert(wordKey).inserted else { return }
+        defer { deletingWordKeys.remove(wordKey) }
+
+        var firstError: Error?
+        for id in ids {
+            do {
+                try await VocabularyRepository.delete(id: id)
+                removedVocabularyIDs.insert(id)
+            } catch {
+                firstError = error
+                break
+            }
         }
+
+        onRefresh()
+
+        if let firstError {
+            topicReviewMessage = "Xoá từ thất bại: \(firstError.localizedDescription)"
+            showingTopicReviewAlert = true
+        } else if displayedVocabs.isEmpty {
+            dismiss()
+        }
+    }
+
+    private func markVocabularyRemoved(_ id: String) {
+        removedVocabularyIDs.insert(id)
+        onRefresh()
+
+        if displayedVocabs.isEmpty {
+            shouldDismissAfterLastVocabularyRemoval = true
+        }
+    }
+
+    private func dismissAfterLastVocabularyRemovalIfNeeded() {
+        guard shouldDismissAfterLastVocabularyRemoval, displayedVocabs.isEmpty else { return }
+        shouldDismissAfterLastVocabularyRemoval = false
+        dismiss()
     }
 
     private func canEdit(_ item: Vocabulary?) -> Bool {
@@ -295,7 +346,7 @@ struct TopicDetailView: View {
     }
 
     private var canSubmitTopic: Bool {
-        !vocabs.isEmpty
+        !displayedVocabs.isEmpty
     }
 
     private func submitTopicForReview(_ topicInfo: UserTopic) async {
@@ -304,7 +355,7 @@ struct TopicDetailView: View {
         shouldDismissAfterTopicAlert = false
 
         do {
-            try await ContributionRepository.submitPrivateTopicForReview(topic: topicInfo, vocabs: vocabs)
+            try await ContributionRepository.submitPrivateTopicForReview(topic: topicInfo, vocabs: displayedVocabs)
             topicReviewMessage = "Đã gửi topic cho admin duyệt."
             showingTopicReviewAlert = true
         } catch {
@@ -349,22 +400,32 @@ struct TopicDetailView: View {
 }
 
 struct WordDetailView: View {
+    @Environment(\.dismiss) private var dismiss
+
     let word: String
     var meanings: [Vocabulary]
     var saveAsSystem: Bool = false
     var isPrivateTopic: Bool = false
     var onRefresh: () -> Void
+    var onVocabularyDeleted: (String) -> Void = { _ in }
     
     @State private var selectedVocab: Vocabulary? = nil
-    @State private var practiceSession: PronunciationPracticeSession? = nil
     @State private var isSubmittingContribution = false
     @State private var contributionMessage = ""
     @State private var showingContributionAlert = false
     @State private var submissionStatuses: [String: VocabSubmissionStatus] = [:]
+    @State private var removedMeaningIDs: Set<String> = []
+
+    private var displayedMeanings: [Vocabulary] {
+        meanings.filter { meaning in
+            guard let id = meaning.id else { return true }
+            return !removedMeaningIDs.contains(id)
+        }
+    }
     
     var body: some View {
         List {
-            ForEach(Array(meanings.enumerated()), id: \.element.id) { index, item in
+            ForEach(Array(displayedMeanings.enumerated()), id: \.element.id) { index, item in
                 Section(header: HStack {
                     Text("Nghĩa \(index + 1)")
                     if item.visibility == "private" {
@@ -404,7 +465,11 @@ struct WordDetailView: View {
                         }
                         if let eExample = item.E_example, !eExample.isEmpty {
                             DetailRow(title: "Ví dụ Tiếng Anh", content: eExample, isItalic: true, onSpeak: {
-                                SpeechManager.shared.speak(word: eExample, ipa: nil)
+                                SpeechManager.shared.speak(
+                                    example: eExample,
+                                    targetWord: item.vocab ?? word,
+                                    ipa: item.IPA
+                                )
                             })
                         }
                         if let vExample = item.V_example, !vExample.isEmpty {
@@ -445,10 +510,10 @@ struct WordDetailView: View {
             }
             
             Section {
-                let learningItem = meanings.first(where: { ($0.learning_level ?? 0) > 0 })
+                let learningItem = displayedMeanings.first(where: { ($0.learning_level ?? 0) > 0 })
                 if learningItem == nil {
                     Button(action: {
-                        Task { await addToLearning(meanings) }
+                        Task { await addToLearning(displayedMeanings) }
                     }) {
                         HStack {
                             Image(systemName: "graduationcap.fill")
@@ -464,78 +529,44 @@ struct WordDetailView: View {
                     .listRowBackground(Color.clear)
                 } else if let learningItem = learningItem {
                     let level = learningItem.learning_level ?? 1
-                    if level >= 6 {
-                        let averageScore = pronunciationAverage(for: meanings)
-                        let hasPassed = (averageScore ?? 0) >= 70
-                        let isDue = ReviewScheduler.isDue(learningItem, now: Date())
+                    let isDue = ReviewScheduler.isDue(learningItem, now: Date())
 
-                        VStack(spacing: 10) {
-                            if hasPassed {
-                                masterPassedCard(score: averageScore)
-                            } else {
-                                Button {
-                                    openLearningTab()
-                                } label: {
-                                    masterNeedsPronunciationCard(isAction: true)
-                                }
-                                .buttonStyle(.plain)
-                            }
-
-                            if hasPassed {
-                                Button {
-                                    openLearningTab()
-                                } label: {
-                                    reviewInfoCard(
-                                        title: "Đang học (Cấp độ \(level))",
-                                        reviewText: reviewTimeText(for: learningItem.next_review),
-                                        tint: .purple,
-                                        isAction: true
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                            } else if isDue {
-                                Button {
-                                    openLearningTab()
-                                } label: {
-                                    reviewInfoCard(
-                                        title: "Đang học (Cấp độ \(level))",
-                                        reviewText: reviewTimeText(for: learningItem.next_review),
-                                        tint: .purple,
-                                        isAction: true
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                            } else {
+                    if isDue {
+                        Button {
+                            openLearningTab()
+                        } label: {
+                            if level >= 6 {
                                 reviewInfoCard(
                                     title: "Đang học (Cấp độ \(level))",
                                     reviewText: reviewTimeText(for: learningItem.next_review),
                                     tint: .purple,
-                                    isAction: false
+                                    isAction: true
                                 )
-                            }
-                        }
-                        .listRowBackground(Color.clear)
-                    } else {
-                        if ReviewScheduler.isDue(learningItem, now: Date()) {
-                            Button {
-                                openLearningTab()
-                            } label: {
+                            } else {
                                 learningProgressCard(
                                     level: level,
                                     reviewText: reviewTimeText(for: learningItem.next_review),
                                     isAction: true
                                 )
                             }
-                            .buttonStyle(.plain)
-                            .listRowBackground(Color.clear)
-                        } else {
-                            learningProgressCard(
-                                level: level,
-                                reviewText: reviewTimeText(for: learningItem.next_review),
-                                isAction: false
-                            )
-                                .listRowBackground(Color.clear)
                         }
+                        .buttonStyle(.plain)
+                        .listRowBackground(Color.clear)
+                    } else if level >= 6 {
+                        reviewInfoCard(
+                            title: "Đang học (Cấp độ \(level))",
+                            reviewText: reviewTimeText(for: learningItem.next_review),
+                            tint: .purple,
+                            isAction: false
+                        )
+                        .listRowBackground(Color.clear)
+                    } else {
+                        learningProgressCard(
+                            level: level,
+                            reviewText: reviewTimeText(for: learningItem.next_review),
+                            isAction: false
+                        )
+                        .listRowBackground(Color.clear)
                     }
                 }
             }
@@ -597,12 +628,6 @@ struct WordDetailView: View {
                 selectedVocab = nil
             })
         }
-        .fullScreenCover(item: $practiceSession) { session in
-            PronunciationSessionView(tasks: session.tasks) {
-                practiceSession = nil
-                onRefresh()
-            }
-        }
         .alert("Thông báo", isPresented: $showingContributionAlert) {
             Button("OK") {}
         } message: {
@@ -621,26 +646,32 @@ struct WordDetailView: View {
         NotificationCenter.default.post(name: .openLearningTab, object: nil)
     }
 
-    private func startPronunciationPractice() {
-        let tasks = makePronunciationTasks(from: meanings)
-        guard !tasks.isEmpty else { return }
-        practiceSession = PronunciationPracticeSession(tasks: tasks)
-    }
-
     func deleteSingleMeaning(_ item: Vocabulary) async {
         guard let id = item.id else { return }
         do {
             try await VocabularyRepository.delete(id: id)
+            removedMeaningIDs.insert(id)
+            onVocabularyDeleted(id)
+            onRefresh()
 
-            DispatchQueue.main.async {
-                onRefresh()
+            if displayedMeanings.isEmpty {
+                dismiss()
             }
         } catch {
-            print("Xóa thất bại: \(error)")
+            contributionMessage = "Xoá nghĩa thất bại: \(error.localizedDescription)"
+            showingContributionAlert = true
         }
     }
     
     func addToLearning(_ items: [Vocabulary]) async {
+        guard items.allSatisfy({
+            !($0.E_example?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        }) else {
+            contributionMessage = "Mỗi nghĩa cần một ví dụ tiếng Anh trước khi đưa từ này vào học."
+            showingContributionAlert = true
+            return
+        }
+
         let now = Date()
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -683,66 +714,6 @@ struct WordDetailView: View {
         .cornerRadius(10)
     }
 
-    private func masterNeedsPronunciationCard(isAction: Bool) -> some View {
-        VStack(spacing: 5) {
-            HStack {
-                Image(systemName: "star.fill")
-                Text("Đã master từ này")
-            }
-            .font(.headline)
-            .foregroundColor(isAction ? .white : .purple)
-
-            Text("=> Kiểm tra phát âm ở trang Learning")
-                .font(.subheadline)
-                .foregroundColor(isAction ? .white.opacity(0.9) : .secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding()
-        .background(isAction ? Color.purple : Color.purple.opacity(0.1))
-        .cornerRadius(10)
-    }
-
-    private func masterPassedCard(score: Int?) -> some View {
-        VStack(spacing: 5) {
-            HStack {
-                Image(systemName: "star.fill")
-                Text("Đã master từ này")
-            }
-            .font(.headline)
-            .foregroundColor(.purple)
-
-            Text("=> Đã hoàn thành kiểm tra phát âm")
-                .font(.subheadline)
-                .foregroundColor(.green)
-
-            if let score {
-                HStack {
-                    Image(systemName: "mic.fill")
-                    Text("Điểm phát âm: \(score)/100")
-                }
-                .font(.subheadline)
-                .foregroundColor(score >= 70 ? .green : .orange)
-                .padding(.top, 2)
-            }
-
-            Button(action: startPronunciationPractice) {
-                Text("Luyện phát âm ngay")
-                    .font(.subheadline)
-                    .bold()
-                    .padding(.horizontal, 15)
-                    .padding(.vertical, 8)
-                    .background(Color.purple)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-            }
-            .padding(.top, 5)
-        }
-        .frame(maxWidth: .infinity)
-        .padding()
-        .background(Color.purple.opacity(0.1))
-        .cornerRadius(10)
-    }
-
     private func reviewInfoCard(title: String, reviewText: String, tint: Color, isAction: Bool) -> some View {
         VStack(spacing: 5) {
             HStack {
@@ -763,7 +734,7 @@ struct WordDetailView: View {
     }
 
     private var canSubmitToSystem: Bool {
-        !AuthManager.shared.isAdmin && !isPrivateTopic && meanings.contains { $0.visibility == "private" }
+        !AuthManager.shared.isAdmin && !isPrivateTopic && displayedMeanings.contains { $0.visibility == "private" }
     }
 
     private func privateTag() -> some View {
@@ -785,7 +756,7 @@ struct WordDetailView: View {
     }
 
     private var privateSubmissionStatuses: [VocabSubmissionStatus] {
-        meanings.compactMap { item in
+        displayedMeanings.compactMap { item in
             guard item.visibility == "private",
                   let catalogId = item.catalog_id ?? item.id else { return nil }
             return submissionStatuses[catalogId]
@@ -793,7 +764,7 @@ struct WordDetailView: View {
     }
 
     private func submitPrivateMeanings() async {
-        let privateMeanings = meanings.filter { item in
+        let privateMeanings = displayedMeanings.filter { item in
             guard item.visibility == "private",
                   let catalogId = item.catalog_id ?? item.id else { return false }
             return submissionStatuses[catalogId]?.status != "pending"
@@ -833,23 +804,6 @@ struct WordDetailView: View {
         }
     }
 
-    private func makePronunciationTasks(from meanings: [Vocabulary]) -> [PronunciationTask] {
-        meanings.compactMap { item in
-            guard let word = item.vocab else { return nil }
-            return PronunciationTask(
-                word: word,
-                targetText: item.E_example?.isEmpty == false ? item.E_example! : word,
-                meaning: item
-            )
-        }
-    }
-
-    private func pronunciationAverage(for meanings: [Vocabulary]) -> Int? {
-        let scores = meanings.compactMap(\.pronunciation_score)
-        guard !scores.isEmpty else { return nil }
-        return scores.reduce(0, +) / scores.count
-    }
-    
     struct DetailRow: View {
         let title: String
         let content: String
@@ -886,9 +840,4 @@ struct WordDetailView: View {
             .padding(.bottom, 2)
         }
     }
-}
-
-private struct PronunciationPracticeSession: Identifiable {
-    let id = UUID()
-    let tasks: [PronunciationTask]
 }

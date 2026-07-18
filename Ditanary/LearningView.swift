@@ -2,6 +2,128 @@ import SwiftUI
 import Charts
 
 struct LearningView: View {
+    let openVocabularyRequest: UUID?
+
+    @State private var showVocabularyLearning = false
+    @State private var lastHandledVocabularyRequest: UUID?
+
+    init(openVocabularyRequest: UUID? = nil) {
+        self.openVocabularyRequest = openVocabularyRequest
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 18) {
+                    NavigationLink {
+                        VocabularyLearningView()
+                    } label: {
+                        LearningCategoryCard(
+                            title: "Học từ vựng",
+                            subtitle: "Ôn tập ngắt quãng, ghi nhớ nghĩa và luyện phát âm câu ví dụ.",
+                            icon: "books.vertical.fill",
+                            tint: .blue
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    NavigationLink {
+                        ListeningPracticeDashboardView()
+                    } label: {
+                        LearningCategoryCard(
+                            title: "Luyện nghe chép chính tả",
+                            subtitle: "Chọn bài đã đưa vào luyện nghe và chép lại từng câu bạn nghe được.",
+                            icon: "headphones",
+                            tint: .orange
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    NavigationLink {
+                        ShadowingPracticeDashboardView()
+                    } label: {
+                        LearningCategoryCard(
+                            title: "Luyện Shadowing",
+                            subtitle: "Nghe câu mẫu, nhại lại và nhận phản hồi phát âm chi tiết từ Azure.",
+                            icon: "waveform.and.mic",
+                            tint: .purple
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding()
+            }
+            .background(Color(UIColor.systemGroupedBackground).ignoresSafeArea())
+            .navigationTitle("Học tiếng Anh")
+            .navigationBarTitleDisplayMode(.large)
+            .navigationDestination(isPresented: $showVocabularyLearning) {
+                VocabularyLearningView()
+            }
+        }
+        .onAppear {
+            openVocabularyIfNeeded()
+        }
+        .onChange(of: openVocabularyRequest) { _, _ in
+            openVocabularyIfNeeded()
+        }
+    }
+
+    private func openVocabularyIfNeeded() {
+        guard let openVocabularyRequest,
+              openVocabularyRequest != lastHandledVocabularyRequest else {
+            return
+        }
+
+        lastHandledVocabularyRequest = openVocabularyRequest
+        showVocabularyLearning = true
+    }
+}
+
+private struct LearningCategoryCard: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(tint.opacity(0.14))
+                    .frame(width: 58, height: 58)
+
+                Image(systemName: icon)
+                    .font(.system(size: 27, weight: .bold))
+                    .foregroundColor(tint)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundColor(.primary)
+
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .lineLimit(3)
+            }
+
+            Spacer(minLength: 8)
+
+            Image(systemName: "chevron.right")
+                .font(.headline)
+                .foregroundColor(.secondary.opacity(0.7))
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 22)
+                .fill(Color(UIColor.secondarySystemGroupedBackground))
+                .shadow(color: Color.black.opacity(0.05), radius: 12, x: 0, y: 5)
+        )
+    }
+}
+
+struct VocabularyLearningView: View {
     @State private var isLoading = true
     
     @State private var learningVocabGroups: [[Vocabulary]] = []
@@ -10,12 +132,11 @@ struct LearningView: View {
     @State private var totalLearningWords = 0
     @State private var totalSavedWords = 0
     @State private var dueVocabsCount = 0
-    @State private var masterDueVocabsCount = 0
+    @State private var unavailablePronunciationWords: [String] = []
     
     @State private var showLearningSession = false
-    @State private var showPronunciationSession = false
     @State private var statsByLevel: [Int: Int] = [1:0, 2:0, 3:0, 4:0, 5:0, 6:0]
-    @State private var masterTasks: [PronunciationTask] = []
+    @State private var errorMessage: String?
     
     var body: some View {
         NavigationStack {
@@ -41,14 +162,13 @@ struct LearningView: View {
                     }
                 )
             }
-            .fullScreenCover(isPresented: $showPronunciationSession) {
-                PronunciationSessionView(
-                    tasks: masterTasks,
-                    onClose: {
-                        showPronunciationSession = false
-                        Task { await prepareSession() }
-                    }
-                )
+            .alert("Thông báo", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "")
             }
         }
     }
@@ -148,7 +268,7 @@ struct LearningView: View {
                             .foregroundColor(dueVocabsCount > 0 ? .orange : .green)
                     }
                     
-                    if dueVocabsCount > 0 {
+                    if dueVocabsCount > 0 && !tasks.isEmpty {
                         Button(action: {
                             showLearningSession = true
                         }) {
@@ -167,56 +287,26 @@ struct LearningView: View {
                             .cornerRadius(18)
                             .shadow(color: Color.blue.opacity(0.3), radius: 8, x: 0, y: 4)
                         }
-                    } else {
-                        HStack {
-                            Image(systemName: "sparkles")
-                            Text("Hoàn thành mục tiêu!")
-                                .bold()
-                        }
-                        .foregroundColor(.green)
-                        .padding()
-                        .frame(maxWidth: .infinity)
-                        .background(Color.green.opacity(0.1))
-                        .cornerRadius(18)
-                    }
-                    
-                    Divider()
-                    
-                    HStack {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("Kiểm tra Phát âm Master")
-                                .font(.headline)
-                            
-                            Text(masterDueVocabsCount > 0 ? "Bạn có \(masterDueVocabsCount) từ Master hiện có để luyện tập." : "Không có từ Master nào cần kiểm tra lúc này.")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        
-                        Image(systemName: "mic.fill")
-                            .font(.system(size: 30))
-                            .foregroundColor(masterDueVocabsCount > 0 ? .purple : .green)
-                    }
-                    
-                    if masterDueVocabsCount > 0 {
-                        Button(action: {
-                            showPronunciationSession = true
-                        }) {
-                            HStack {
-                                Text("Luyện tập Master")
-                                    .bold()
-                                Image(systemName: "star.fill")
-                            }
-                            .font(.title3)
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(
-                                LinearGradient(colors: [.purple, .purple.opacity(0.8)], startPoint: .leading, endPoint: .trailing)
+                        if !unavailablePronunciationWords.isEmpty {
+                            Label(
+                                "\(unavailablePronunciationWords.count) từ đang thiếu câu ví dụ nên chưa thể vào set.",
+                                systemImage: "exclamationmark.triangle.fill"
                             )
-                            .cornerRadius(18)
-                            .shadow(color: Color.purple.opacity(0.3), radius: 8, x: 0, y: 4)
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
+                    } else if dueVocabsCount > 0 {
+                        Label(
+                            "Các từ đến hạn đang thiếu câu ví dụ tiếng Anh để luyện phát âm.",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.subheadline)
+                        .foregroundColor(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                        .background(Color.orange.opacity(0.1))
+                        .cornerRadius(18)
                     } else {
                         HStack {
                             Image(systemName: "sparkles")
@@ -237,6 +327,7 @@ struct LearningView: View {
                         .shadow(color: Color.black.opacity(0.05), radius: 15, x: 0, y: 5)
                 )
                 .padding(.horizontal)
+
             }
             .padding(.vertical)
         }
@@ -255,30 +346,35 @@ struct LearningView: View {
         }
     }
     
-    func prepareSession() async {
+    @MainActor
+    private func prepareSession() async {
         isLoading = true
+        defer { isLoading = false }
+
         do {
-            guard let userId = AuthManager.shared.currentUser?.id.uuidString else { return }
+            guard let userId = AuthManager.shared.currentUser?.id.uuidString else {
+                learningVocabGroups = []
+                tasks = []
+                totalLearningWords = 0
+                totalSavedWords = 0
+                dueVocabsCount = 0
+                unavailablePronunciationWords = []
+                statsByLevel = [1:0, 2:0, 3:0, 4:0, 5:0, 6:0]
+                return
+            }
+
             let allResponse = try await VocabularyRepository.fetchUserVocabs(userId: userId)
             let plan = LearningSessionBuilder.build(from: allResponse)
-            
-            DispatchQueue.main.async {
-                self.statsByLevel = plan.statsByLevel
-                self.totalLearningWords = plan.totalLearningWords
-                self.totalSavedWords = plan.totalSavedWords
-                self.dueVocabsCount = plan.dueVocabsCount
-                self.masterDueVocabsCount = plan.masterDueVocabsCount
-                self.learningVocabGroups = plan.selectedGroups
-                self.tasks = plan.tasks
-                self.masterTasks = plan.masterTasks
-                self.isLoading = false
-            }
-            
+
+            statsByLevel = plan.statsByLevel
+            totalLearningWords = plan.totalLearningWords
+            totalSavedWords = plan.totalSavedWords
+            dueVocabsCount = plan.dueVocabsCount
+            unavailablePronunciationWords = plan.unavailablePronunciationWords
+            learningVocabGroups = plan.selectedGroups
+            tasks = plan.tasks
         } catch {
-            print("Lỗi tải bài học: \(error)")
-            DispatchQueue.main.async {
-                self.isLoading = false
-            }
+            errorMessage = "Không tải được dữ liệu học từ vựng: \(error.localizedDescription)"
         }
     }
 }

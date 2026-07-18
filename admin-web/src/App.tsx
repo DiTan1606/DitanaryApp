@@ -1379,6 +1379,10 @@ function VocabEditorModal({
       setError('Vui lòng nhập từ vựng.');
       return;
     }
+    if (!draft.e_example.trim()) {
+      setError('Mỗi nghĩa cần một ví dụ tiếng Anh để luyện phát âm.');
+      return;
+    }
 
     setIsSaving(true);
     try {
@@ -1441,7 +1445,7 @@ function VocabEditorModal({
             <textarea value={draft.ev_meaning} onChange={(event) => update('ev_meaning', event.target.value)} />
           </label>
           <label>
-            Ví dụ tiếng Anh
+            Ví dụ tiếng Anh *
             <textarea value={draft.e_example} onChange={(event) => update('e_example', event.target.value)} />
           </label>
           <label>
